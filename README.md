@@ -7,7 +7,7 @@ This repository contains deposited codes for aperiodic 1/f e vs i glioma manuscr
 - `RestingState/`  
   Scripts for preprocessing and analyzing resting-state electrophysiology data, including power spectral density (PSD) calculation and 1/f aperiodic slope extraction.
 
-- `LanguageTask/`  
+- `LanguageTasks/`  
   Scripts for analyzing task-based data from a picture naming and auditory naming paradigm. Includes trial parsing, event-related PSD computation, and slope extraction for correct vs. incorrect trials.
 
 - `Anesthesia/`  
