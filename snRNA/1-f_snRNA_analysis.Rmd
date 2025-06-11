@@ -1,0 +1,1927 @@
+---
+title: "snRNA analysis with MapMyCells Neuron Subcluster Annotations"
+output: html_notebook
+---
+
+
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(RColorBrewer)
+library(ggpubr)
+library(writexl)
+```
+
+1. Load Combined R Object
+```{r}
+obj <- readRDS("combinedobject.rds")
+# Join Layers to clean up pbject
+#DefaultAssay(obj) <- "RNA"
+# not enough storage obj <- JoinLayers(obj, assay = "RNA")
+
+DimPlot(obj, label="T")
+```
+2. Find Markers for prelim annotations (can skip)
+```{r}
+diff_exp <- FindAllMarkers(PrepSCTFindMarkers(obj), logfc.threshold = .5, min.pct = .5)
+```
+
+Assign annotations
+```{r}
+
+cluster_ids <- c(
+  "0" = "Tumor",
+  "1" = "Oligodendrocyte",
+  "2" = "Endothelial",
+  "3" = "Oligodendrocyte",
+  "4" = "Astrocyte",
+  "5" = "Oligodendrocyte",
+  "6" = "Neurons",
+  "7" = "Myeloid/microglial",
+  "8" = "Astrocyte",
+  "9" = "Tumor",
+  "10" = "Neurons",
+  "11" = "Neurons",
+  "12" = "Tumor",
+  "13" = "Neurons",
+  "14" = "Neurons",
+  "15" = "Neurons",
+  "16" = "Neurons",
+  "17" = "Neurons",
+  "18" = "Oligodendrocyte",
+  "19" = "Tumor",
+  "20" = "Oligodendrocyte",
+  "21" = "Mesenchymal",
+  "22" = "Erythroid",
+  "23" = "Oligodendrocyte",
+  "24" = "Neurons",
+  "25" = "Tumor",
+  "26" = "Myeloid",
+  "27" = "Neurons",
+  "28" = "Tumor",
+  "29" = "Oligodendrocyte",
+  "30" = "Tumor",
+  "31" = "Neurons",
+  "32" = "Neurons",
+  "33" = "Astrocyte",
+  "34" = "Tumor"
+)
+names(cluster_ids) <-levels(obj)
+obj<- RenameIdents(obj,cluster_ids )
+```
+
+```{r}
+# Define custom colors
+my_colors <- c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", 
+               "#FF7F00", "#FFFF33", "#A65628", "#F781BF", "#999999")
+
+my_colors_2 <- c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", 
+               "#FF7F00", "#FFFF33", "#A65628", "#F781BF", "#999999",
+               "#66C2A5")
+
+my_colors_3 <- c("#999999", "#999999", "#999999", "#999999", 
+               "#999999", "#999999", "#999999", "#999999", "#999999",
+               "#999999")
+
+# Generate the plot with custom colors
+DimPlot(obj, cols = my_colors_3, label = F) + NoAxes()
+DimPlot(obj, label = T)
+DimPlot(obj, group.by ="one_over_f_status") + ggtitle("1/F in all Tissue Types")
+
+DimPlot(obj, group.by ="one_over_f_status", split.by = "cortex_type")
+
+obj$orig.ident
+my_colors_temp <- c("#E41A1C", "#377EB8", "#4DAF4A", "#FF7F00", 
+               "#984EA3", "#FFFF33", "#A65628", "#F781BF", "#999999",
+               "#66C2A5")
+obj$manual_anot <- Idents(obj)
+plot <- DimPlot(obj, label=F, group.by = "manual_anot", cols = my_colors_temp)  +NoAxes()
+LabelClusters(plot, id = "manual_anot",  max.overlaps=10, size = 4, repel = T,  box.padding = 1)+ggsave(filename= "complete_umap_repelled_labels.png",path ="D:/Youssef Sibih/YS_Backup/Figs 3_24_25", width = 7, height = 3, device='png', units="in", dpi=600)
+
+LabelClusters(plot, id = "manual_anot",  max.overlaps=10, size = 4, repel = T,  box.padding = 1)+ggsave(filename= "complete_umap_repelled_labels.pdf",path ="D:/Youssef Sibih/YS_Backup/Figs 3_24_25", width = 7, height = 3, device='pdf', units="in", dpi=600)
+
+LabelClusters(plot, id = "manual_anot",  max.overlaps=10, size = 4, repel = F,  box.padding = 1)+ggsave(filename= "complete_umap_labels.png",path ="D:/Youssef Sibih/YS_Backup/Figs 3_24_25", width = 7, height = 3, device='png', units="in", dpi=600)
+LabelClusters(plot, id = "manual_anot",  max.overlaps=10, size = 4, repel = F,  box.padding = 1)+ggsave(filename= "complete_umap_labels.pdf",path ="D:/Youssef Sibih/YS_Backup/Figs 3_24_25", width = 7, height = 3, device='pdf', units="in", dpi=600)
+
+
+obj$manual_anot <- Idents(obj)
+plot <- DimPlot(neuron_obj_cleaned, group.by="class_name", cols = my_colors)  +NoAxes()
+LabelClusters(plot, id = "class_name",  max.overlaps=10, size = 4, repel = T,  box.padding = 1)+
+ggsave(path ="D:/Youssef Sibih/YS_Backup/Figs 3_24_25", width = 3, height = 168, device='png', dpi=600)
+
+
+```
+
+Subset to neuronal population and convert to h5ad for mapmycells
+https://mojaveazure.github.io/seurat-disk/articles/convert-anndata.html
+
+need to convert to v3 prior to conversion:
+https://github.com/satijalab/seurat/issues/8220
+
+
+https://samuel-marsh.github.io/scCustomize/articles/Object_Conversion.html#convert-seurat-or-liger-objects-to-anndata-objects
+Need to use raw counts RNA
+
+
+https://github.com/satijalab/seurat/issues/8558
+JoinLayers is only defined for v5 assays (i.e. StdAssay/Assay5) instances. The SCTAssay class is a v3 assay so it has no definition for JoinLayers, hence the error folks are encountering. The good news is that the step can be just be skipped in this case
+
+
+Using MTG atlas in MapMyCellsGui, which will include all cortical neuronal populations
+
+
+```{r}
+# Load Packages
+library(Seurat)
+library(rliger)
+library(scCustomize)
+library(qs)
+library(anndata)
+library(reticulate)
+reticulate::py_install("anndata")
+
+#uses SCT
+neuron_obj <- subset(x=obj, idents="Neurons")
+#as.anndata(x = neuron_obj, file_path = "C:/YS_Backup", file_name = "neurons_anndata_v1_SCT.h5ad")
+
+#Uses RNA
+DefaultAssay(neuron_obj) <- "RNA"
+neuron_obj_joined <- JoinLayers(neuron_obj, assay = "RNA")
+as.anndata(x = neuron_obj_joined, file_path = "C:/YS_Backup", file_name = "neurons_anndata_v1_RNA.h5ad")
+
+#split in half too big
+## Define clusters for Group 1
+# Ensure `seurat_clusters` is treated as character, not factor
+neuron_obj_joined$seurat_clusters <- as.character(neuron_obj_joined$seurat_clusters)
+
+# Define clusters for Group 1
+group1_clusters <- c("17", "10", "6", "13", "11", "14")  # Make sure these are characters
+neuron_obj_group1 <- subset(neuron_obj_joined, seurat_clusters %in% group1_clusters)
+# Subset Group 2 (everything NOT in Group 1)
+neuron_obj_group2 <- subset(neuron_obj_joined, subset = seurat_clusters %in% setdiff(unique(neuron_obj_joined$seurat_clusters), group1_clusters))
+
+
+#  Convert Group 1 to `.h5ad`
+#as.anndata(x = neuron_obj_group1, file_path = "C:/YS_Backup", file_name = "neurons_anndata_group1.h5ad")
+
+#  Convert Group 2 to `.h5ad`
+#as.anndata(x = neuron_obj_group2, file_path = "C:/YS_Backup", file_name = "neurons_anndata_group2.h5ad")
+
+
+```
+
+
+
+```{r}
+library(infercnv)
+library(tidyverse)
+setwd("D:/cnv_files")
+obj<- JoinLayers(obj, assay="RNA", layer= "counts",overwrite = TRUE)
+
+counts_matrix = LayerData(obj, assay= "RNA",layer="counts")
+saveRDS(counts_matrix, file = "D:/cnv_files/counts_matrix.rds")
+
+tibble(cellID = colnames(obj), clusterID = Idents(obj)) %>%
+  write_csv(file = sprintf("D:/cnv_files/cell_Anotations_%s.csv", Sys.Date()))
+
+
+infercnv_obj <- CreateInfercnvObject(raw_counts_matrix = counts_matrix, 
+                                     annotations_file = as.matrix(obj@active.ident),
+                                     gene_order_file = "C:/YS_Backup/infercnv_files/hg38_gencode_v27.txt",
+                                     delim="\t",
+                                     ref_group_names = c("Oligodendrocyte", "Neurons", "Endothelial", "Astrocyte", "Erythroid", "Mesenchymal", "Myeloid/microglial", "Myeloid"))
+
+infercnv_obj_run <- infercnv::run(infercnv_obj,
+                                  out_dir ="C:/YS_Backup/infercnv_files",
+                                  cutoff= 0.1, #bc used 10x,
+                                  cluster_by_groups=T,
+                                  HMM=T,
+                                  denoise=T,
+                                  up_to_step = 15)
+
+```
+
+
+
+
+Now read results
+https://portal.brain-map.org/atlases-and-data/bkp/mapmycells/mapmycells-use-case-single-cell-genomics-in-mouse
+
+
+```{r}
+library(anndata)
+library(Seurat)
+library(dplyr)
+neuron_obj <- subset(x=obj, idents="Neurons")
+#  Define mapping files for Neurons 1 & 2
+mapping_files <- list(
+  neurons_1 = "C:/YS_Backup/Neurons_1_MTG/neurons_anndata_group1.csv",
+  neurons_2 = "C:/YS_Backup/Neurons_2_MTG/neurons_anndata_group2.csv"
+)
+
+#  Load and combine both annotations
+all_mappings <- lapply(mapping_files, function(file) {
+  mapping <- read.csv(file, comment.char = "#")
+  rownames(mapping) <- mapping$cell_id  # Ensure rownames are set
+  return(mapping[, c("class_name", "subclass_name")])  # Keep only relevant columns
+})
+
+# Merge both neuron group mappings
+combined_mapping <- bind_rows(all_mappings)
+
+# Ensure only matching cell IDs are used
+common_cells <- intersect(rownames(neuron_obj@meta.data), rownames(combined_mapping))
+
+# Subset combined mapping to include only cells in `neuron_obj`
+combined_mapping <- combined_mapping[common_cells, , drop = FALSE]
+
+# Add the MapMyCells annotations to the original Seurat object
+neuron_obj <- AddMetaData(neuron_obj, metadata = combined_mapping)
+
+# Verify metadata integration
+print("Neuron Object Metadata:")
+head(neuron_obj@meta.data)
+
+#  Visualize UMAP with new annotations
+DimPlot(neuron_obj, reduction = "umap", group.by = "class_name", label = TRUE)
+DimPlot(neuron_obj, reduction = "umap", group.by = "subclass_name", label = TRUE)
+
+
+```
+```{r}
+
+```
+
+
+```{r}
+# Define the color mapping for each cell type
+my_colors <- c(
+  "Neuronal: Glutamatergic"    = "orange",
+  "Neuronal: GABAergic"      = "lightblue"
+)
+
+my_colors_2 <- c(
+  "L2/3 IT"    = "#FEC89A",
+  "L4 IT"      = "#FCD5CE",
+  "L5 IT"      = "#FFDAB9",
+  "L6 IT"      = "#F49595",
+  "L6 IT Car3" = "#F1CEBE",
+  "L5 ET"      = "#F3D17C",
+  "L6 CT"      = "#FCEFB4",
+  "L5/6 NP"    = "#F9ED85",
+  "L6b"        = "#FFCAE9",
+  "Chandelier" = "#A9E4DE",
+  "Sst Chodl"  = "#83B8C6",
+  "Lamp5"      = "#D0E444",    
+  "Lamp5 Lhx6" = "#D0EDEF",
+  "Pax6"       = "#E1D3F8",
+  "Vip"        = "#B0B5ED", 
+  "Sncg"       = "#D6DFE8",
+  "Pvalb"      = "#8FC0E3",    
+  "Sst"        = "#7FB3D5"    
+)
+
+
+neuron_obj_cleaned <- subset(x=neuron_obj, subset = class_name %in% c("Neuronal: Glutamatergic", "Neuronal: GABAergic") )
+
+DimPlot(neuron_obj_cleaned, reduction = "umap", group.by = "class_name", label = TRUE, repel = T)
+DimPlot(neuron_obj_cleaned, reduction = "umap", group.by = "subclass_name", label = TRUE, repel = T)
+plot <- DimPlot(neuron_obj_cleaned, group.by="subclass_name", cols = my_colors_2)  +NoAxes()
+LabelClusters(plot, id = "subclass_name",  max.overlaps=10, size = 4, repel = T,  box.padding = 1)
+
+
+plot <- DimPlot(neuron_obj_cleaned, group.by="class_name", cols = my_colors)  +NoAxes()
+LabelClusters(plot, id = "class_name",  max.overlaps=10, size = 4, repel = T,  box.padding = 1)
+
+```
+
+
+
+```{r}
+excitatory_list <- list(c("SLC17A6", "SLC17A7", "SLC17A8", "GRIA1", "GRIA2", "GRIA3", "GRIA4", "GRIN1", "GRIN2A", "GRIN2B", "GRIN2C", "GRIN2D", "GRIN3A", "GRIN3B", "GRM1", "GRM2", "GRM3", "GRM4", "GRM5", "GRM6", "GRM7", "GRM8", "TBR1", "FEZF2", "NEUROD1", "CTIP2", "SATB2", "CAMK2A", "CAMK2B", "NRGN", "SYT1", "PSD95", "DLG4", "SHANK1", "SHANK2", "SHANK3", "HOMER1", "HOMER2", "HOMER3", "VAMP1", "VAMP2"))
+
+inhibitory_list <- list(c("GAD1", "GAD2", "SLC32A1", "SLC6A1", "GABRA1", "GABRA2", "GABRA3", "GABRA4", "GABRA5", "GABRA6", "GABRB1", "GABRB2", "GABRB3", "GABRG1", "GABRG2", "GABRG3", "GABBR1", "GABBR2", "DLX1", "DLX2", "DLX5", "DLX6", "ARX", "LHX6", "SST", "PVALB", "CALB1", "CALB2", "VIP", "CR", "NPY", "GPHN", "NKCC1", "SLC12A2", "KCC2", "SLC12A5"))
+
+neuron_obj_cleaned <- AddModuleScore(neuron_obj_cleaned, features =excitatory_list, name = "Excitatory_Profile", nbin=24 )
+
+neuron_obj_cleaned <- AddModuleScore(neuron_obj_cleaned, features =inhibitory_list, name = "Inhibitory_Profile", nbin=24 )
+```
+
+ExtractData for Prism
+
+```{r}
+prism_data <- neuron_obj_cleaned@meta.data
+write.csv(prism_data,"D:/Youssef Sibih/prism.csv", row.names = FALSE)
+
+```
+
+
+
+
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(RColorBrewer)
+library(ggpubr)
+
+current_obj <- subset(x=neuron_obj_cleaned,subset= cortex_type =="glioblastoma" )
+
+VlnPlot(current_obj, features=  c("Excitatory_Profile1"), group.by = "one_over_f_status") + ggtitle("Excitatory Profile in High vs. Low 1/f; GBM") + ylab("Expression Level")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  geom_signif(comparisons = list(c("high1overf", "low1overf")),
+              map_signif_level = function(p) {
+  if(p < 1e-10) {
+    return("*p < 1e-10")
+  } else {
+    return(sprintf("*p = %.2e", p))
+  }
+},
+              step_increase = 0.15) +
+  ylim(-0.1, .6)
+
+VlnPlot(current_obj, features=  c("Inhibitory_Profile1"), group.by = "one_over_f_status") + ggtitle("Inhibitory Profile in High vs. Low 1/f; GBM") + ylab("Expression Level")+
+  theme(plot.title = element_text(hjust = 0.5))+
+   geom_signif(comparisons = list(c("high1overf", "low1overf")),
+              map_signif_level = function(p) {
+  if(p < 1e-10) {
+    return("*p < 1e-10")
+  } else {
+    return(sprintf("*p = %.2e", p))
+  }
+},
+              step_increase = 0.15) +
+  ylim(-0.2, .6)
+
+
+VlnPlot(current_obj, features=  c("Inhibitory_Profile1"), group.by = "class_name", split.by = "one_over_f_status")
+VlnPlot(current_obj, features=  c("Inhibitory_Profile1"), group.by = "subclass_name", split.by = "one_over_f_status")
+
+VlnPlot(current_obj, features=  c("Excitatory_Profile1"), group.by = "class_name", split.by = "one_over_f_status")
+VlnPlot(current_obj, features=  c("Excitatory_Profile1"), group.by = "subclass_name", split.by = "one_over_f_status")
+```
+
+
+Live for plots for main analysis
+
+```{r}
+## ------------------------------------------------------------
+##  1.  packages  ---------------------------------------------
+## ------------------------------------------------------------
+if (!requireNamespace("ggpattern", quietly = TRUE))
+    install.packages("ggpattern")
+if (!requireNamespace("scales",    quietly = TRUE))
+    install.packages("scales")
+
+library(dplyr)
+library(ggplot2)
+library(ggpattern)
+library(scales)
+
+## ------------------------------------------------------------
+##  2.  proportion table  -------------------------------------
+## ------------------------------------------------------------
+prop_df <- table(neuron_obj_cleaned$one_over_f_status,
+                 neuron_obj_cleaned$subclass_name) |>
+  as.data.frame() |>
+  `colnames<-`(c("one_over_f_status", "type", "Freq")) |>
+  group_by(one_over_f_status) |>
+  mutate(prop = Freq / sum(Freq)) |>
+  ungroup()
+
+## ------------------------------------------------------------
+##  3.  colour palette & order  -------------------------------
+## ------------------------------------------------------------
+my_colors <- c(
+  "L2/3 IT"    = "#FEC89A", "L4 IT"      = "#FCD5CE",
+  "L5 IT"      = "#FFDAB9", "L6 IT"      = "#F49595",
+  "L6 IT Car3" = "#F1CEBE", "L5 ET"      = "#F3D17C",
+  "L6 CT"      = "#FCEFB4", "L5/6 NP"    = "#F9ED85",
+  "L6b"        = "#FFCAE9", "Chandelier" = "#A9E4DE",
+  "Sst Chodl"  = "#83B8C6", "Lamp5"      = "#D0E444",
+  "Lamp5 Lhx6" = "#D0EDEF", "Pax6"       = "#E1D3F8",
+  "Vip"        = "#B0B5ED", "Sncg"       = "#D6DFE8",
+  "Pvalb"      = "#8FC0E3", "Sst"        = "#7FB3D5"
+)
+prop_df$type <- factor(prop_df$type, levels = rev(names(my_colors)))
+
+prop_df <- prop_df |>
+  mutate(one_over_f_status = recode(one_over_f_status,
+                                    "low1overf"  = "Flat 1/f",
+                                    "high1overf" = "Steep 1/f"),
+         one_over_f_status = factor(one_over_f_status,
+                                    levels = c("Flat 1/f", "Steep 1/f")))
+
+## ------------------------------------------------------------
+##  4.  plot  --------------------------------------------------
+## ------------------------------------------------------------
+ggplot(prop_df,
+       aes(x      = prop,
+           y      = type,
+           fill   = type,
+           pattern        = one_over_f_status,
+           pattern_colour = one_over_f_status)) +
+
+  geom_bar_pattern(
+    stat     = "identity",
+    position = position_dodge2(width = 0.9, reverse = TRUE),  # Flat drawn first
+    width    = 0.85,
+    colour   = "black",
+    pattern          = "stripe",
+    pattern_angle    = 45,
+    pattern_density  = 0.4,
+    pattern_spacing  = 0.03,
+    pattern_size     = 0.7,
+    pattern_fill     = NA
+  ) +
+
+  geom_text(aes(label = label_number(accuracy = 0.001)(prop)),
+            position = position_dodge2(width = 0.9, reverse = TRUE),
+            hjust    = -0.15,
+            vjust    = 0.5,
+            size     = 3) +
+
+  scale_fill_manual(values = my_colors, guide = "none") +
+  scale_pattern_manual(values = c("Flat 1/f" = "stripe", "Steep 1/f" = "none"),
+                       guide = "none") +
+  scale_pattern_colour_manual(values = c("Flat 1/f" = "black",
+                                         "Steep 1/f" = NA),
+                               guide = "none") +
+
+  labs(x = "Proportion", y = NULL) +
+  theme_classic(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")      # legend fully suppressed
+
+```
+
+
+```{r}
+## ------------------------------------------------------------
+##  0.  setup & libraries  ------------------------------------
+## ------------------------------------------------------------
+if (!requireNamespace("ggpattern", quietly = TRUE))
+    install.packages("ggpattern")
+if (!requireNamespace("scales",    quietly = TRUE))
+    install.packages("scales")
+
+library(dplyr)
+library(ggplot2)
+library(ggpattern)
+library(scales)
+
+## where to save the PDFs
+out_dir <- "D:/AbrahamDada/proportion_plots_5_15"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+## pull the metadata once
+meta_all <- neuron_obj_cleaned@meta.data   # data‑frame
+
+## ------------------------------------------------------------
+##  colour palette (unchanged)  -------------------------------
+## ------------------------------------------------------------
+my_colors <- c(
+  "L2/3 IT"    = "#FEC89A", "L4 IT"      = "#FCD5CE",
+  "L5 IT"      = "#FFDAB9", "L6 IT"      = "#F49595",
+  "L6 IT Car3" = "#F1CEBE", "L5 ET"      = "#F3D17C",
+  "L6 CT"      = "#FCEFB4", "L5/6 NP"    = "#F9ED85",
+  "L6b"        = "#FFCAE9", "Chandelier" = "#A9E4DE",
+  "Sst Chodl"  = "#83B8C6", "Lamp5"      = "#D0E444",
+  "Lamp5 Lhx6" = "#D0EDEF", "Pax6"       = "#E1D3F8",
+  "Vip"        = "#B0B5ED", "Sncg"       = "#D6DFE8",
+  "Pvalb"      = "#8FC0E3", "Sst"        = "#7FB3D5"
+)
+
+## ------------------------------------------------------------
+##  plotting function (identical style)  ----------------------
+## ------------------------------------------------------------
+plot_one_df <- function(df){
+
+  prop_df <- table(df$one_over_f_status, df$subclass_name) |>
+    as.data.frame() |>
+    `colnames<-`(c("one_over_f_status","type","Freq")) |>
+    group_by(one_over_f_status) |>
+    mutate(prop = Freq / sum(Freq)) |>
+    ungroup() |>
+    mutate(
+      type = factor(type, levels = rev(names(my_colors))),
+      one_over_f_status = recode(one_over_f_status,
+                                 "low1overf"  = "Flat 1/f",
+                                 "high1overf" = "Steep 1/f"),
+      one_over_f_status = factor(one_over_f_status,
+                                 levels = c("Flat 1/f","Steep 1/f"))
+    )
+
+  ggplot(prop_df,
+         aes(x = prop, y = type,
+             fill = type,
+             pattern        = one_over_f_status,
+             pattern_colour = one_over_f_status)) +
+
+    geom_bar_pattern(
+      stat     = "identity",
+      position = position_dodge2(width = 0.9, reverse = TRUE), # Flat first
+      width    = 0.85,
+      colour   = "black",
+      pattern          = "stripe",
+      pattern_angle    = 45,
+      pattern_density  = 0.4,
+      pattern_spacing  = 0.03,
+      pattern_size     = 0.7,
+      pattern_fill     = NA
+    ) +
+
+    geom_text(aes(label = label_number(accuracy = 0.001)(prop)),
+              position = position_dodge2(width = 0.9, reverse = TRUE),
+              hjust = -0.15, vjust = 0.5, size = 3) +
+
+    scale_fill_manual(values = my_colors, guide = "none") +
+    scale_pattern_manual(values = c("Flat 1/f" = "stripe",
+                                    "Steep 1/f" = "none"),
+                         guide = "none") +
+    scale_pattern_colour_manual(values = c("Flat 1/f" = "black",
+                                           "Steep 1/f" = NA),
+                                 guide = "none") +
+
+    labs(x = "Proportion", y = NULL) +
+    theme_classic(base_size = 11) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "none")
+}
+
+## ------------------------------------------------------------
+##  3.  loop over cortex types & save PDFs  -------------------
+## ------------------------------------------------------------
+for (ct in unique(meta_all$cortex_type)) {
+
+  df_ct <- meta_all %>% filter(cortex_type == ct)
+
+  p <- plot_one_df(df_ct)
+
+  ggsave(filename = file.path(out_dir,
+                              paste0(ct, "_proportions.pdf")),
+         plot     = p,
+         device   = cairo_pdf,   # ensures embedded fonts on Windows
+         dpi      = 600,
+         width    = 8,
+         height   = 8)
+}
+
+```
+
+
+```{r}
+# Create the contingency table from the full dataset
+proportion <- table(neuron_obj_cleaned$one_over_f_status, neuron_obj_cleaned$subclass_name)
+proportion <- as.data.frame(proportion)
+colnames(proportion) <- c("one_over_f_status", "type", "Freq")
+
+# Calculate proportions within each one_over_f_status group
+library(dplyr)
+proportion <- proportion %>%
+  group_by(one_over_f_status) %>%
+  mutate(prop = Freq / sum(Freq))
+
+# Define the color mapping for each cell type
+my_colors <- c(
+  "L2/3 IT"    = "#FEC89A",
+  "L4 IT"      = "#FCD5CE",
+  "L5 IT"      = "#FFDAB9",
+  "L6 IT"      = "#F49595",
+  "L6 IT Car3" = "#F1CEBE",
+  "L5 ET"      = "#F3D17C",
+  "L6 CT"      = "#FCEFB4",
+  "L5/6 NP"    = "#F9ED85",
+  "L6b"        = "#FFCAE9",
+  "Chandelier" = "#A9E4DE",
+  "Sst Chodl"  = "#83B8C6",
+  "Lamp5"      = "#D0E444",   # removed trailing space
+  "Lamp5 Lhx6" = "#D0EDEF",
+  "Pax6"       = "#E1D3F8",
+  "Vip"        = "#B0B5ED",   # matching case with your data ("Vip")
+  "Sncg"       = "#D6DFE8",
+  "Pvalb"      = "#8FC0E3",   # chosen blueish hue for missing cell type
+  "Sst"        = "#7FB3D5"    # chosen blueish hue for missing cell type
+)
+
+# Force the order of the cell types (legend and plotting order) to match the order in my_colors
+proportion$type <- factor(proportion$type, levels = names(my_colors))
+
+library(ggplot2)
+
+# Subset data for one_over_f_status == high
+proportion_high <- proportion %>% filter(one_over_f_status == "high1overf")
+
+ggplot(proportion_high, aes(x = type, y = prop, fill = type)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  scale_fill_manual(values = my_colors) +
+  labs(title = "Cell Type Proportions for High 1/F",
+       x = "Cell Type",
+       y = "Proportion") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+# Subset data for one_over_f_status low
+proportion_low <- proportion %>% filter(one_over_f_status == "low1overf")
+
+ggplot(proportion_low, aes(x = type, y = prop, fill = type)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  scale_fill_manual(values = my_colors) +
+  labs(title = "Cell Type Proportions for Low 1/F",
+       x = "Cell Type",
+       y = "Proportion") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+
+
+
+
+```{r}
+proportion <- table(neuron_obj_cleaned$cortex_type, neuron_obj_cleaned$subclass_name)
+proportion <- as.data.frame(proportion)
+colnames(proportion) <- c("cortex_type", "type", "Freq")
+#proportion$type <- factor(proportion$type, levels = c("Neuronal: GABAergic", "Neuronal: Glutamatergic"))
+proportion$cortex_type <- factor(proportion$cortex_type,
+                                         levels = c("Normal Cortex",
+                                                    "oligodendroglioma",
+                                                    "astrocytoma",
+                                                    "glioblastoma"))
+
+library(dplyr)
+proportion <- proportion %>%
+  group_by(cortex_type) %>%
+  mutate(prop = Freq / sum(Freq))
+
+# Define the color mapping for each cell type
+my_colors <- c(
+  "L2/3 IT"    = "#FEC89A",
+  "L4 IT"      = "#FCD5CE",
+  "L5 IT"      = "#FFDAB9",
+  "L6 IT"      = "#F49595",
+  "L6 IT Car3" = "#F1CEBE",
+  "L5 ET"      = "#F3D17C",
+  "L6 CT"      = "#FCEFB4",
+  "L5/6 NP"    = "#F9ED85",
+  "L6b"        = "#FFCAE9",
+  "Chandelier" = "#A9E4DE",
+  "Sst Chodl"  = "#83B8C6",
+  "Lamp5"      = "#D0E444",    
+  "Lamp5 Lhx6" = "#D0EDEF",
+  "Pax6"       = "#E1D3F8",
+  "Vip"        = "#B0B5ED", 
+  "Sncg"       = "#D6DFE8",
+  "Pvalb"      = "#8FC0E3",    
+  "Sst"        = "#7FB3D5"    
+)
+
+# Force the order of the cell types (fill/legend order) to match the order in my_colors
+proportion$type <- factor(proportion$type, levels = names(my_colors))
+
+# Order the cortex_type factor so that bars appear in the desired left-to-right order
+proportion$cortex_type <- factor(proportion$cortex_type, 
+                                 levels = c("Normal Cortex", "oligodendroglioma", "astrocytoma", "glioblastoma"))
+
+# Plot the barplot and relabel the x-axis for abbreviated display
+library(ggplot2)
+ggplot(proportion, aes(x = cortex_type, y = prop, fill = type)) +
+  geom_bar(stat = "identity", width = 0.5) +
+  scale_fill_manual(values = my_colors) +
+  scale_x_discrete(labels = c("Normal Cortex" = "Normal Cortex", 
+                              "oligodendroglioma" = "O", 
+                              "astrocytoma" = "A", 
+                              "glioblastoma" = "GBM")) +
+  labs(title = "Cell Type Proportions by Tissue",
+       x = "Tissue",
+       y = "Proportion") +
+  theme_classic()
+
+
+proportion <- table(neuron_obj_cleaned$cortex_type, neuron_obj_cleaned$class_name)
+proportion <- as.data.frame(proportion)
+colnames(proportion) <- c("cortex_type", "type", "Freq")
+proportion$type <- factor(proportion$type, levels = c("Neuronal: GABAergic", "Neuronal: Glutamatergic"))
+
+library(dplyr)
+proportion <- proportion %>%
+  group_by(cortex_type) %>%
+  mutate(prop = Freq / sum(Freq))
+
+# Define the color mapping for each cell type
+my_colors <- c(
+  "Neuronal: Glutamatergic"    = "orange",
+  "Neuronal: GABAergic"      = "lightblue"
+)
+
+# Force the order of the cell types (fill/legend order) to match the order in my_colors
+proportion$type <- factor(proportion$type, levels = names(my_colors))
+
+# Order the cortex_type factor so that bars appear in the desired left-to-right order
+proportion$cortex_type <- factor(proportion$cortex_type, 
+                                 levels = c("Normal Cortex", "oligodendroglioma", "astrocytoma", "glioblastoma"))
+
+# Plot the barplot and relabel the x-axis for abbreviated display
+library(ggplot2)
+ggplot(proportion, aes(x = cortex_type, y = prop, fill = type)) +
+  geom_bar(stat = "identity", width = 0.5) +
+  scale_fill_manual(values = my_colors) +
+  scale_x_discrete(labels = c("Normal Cortex" = "Normal Cortex", 
+                              "oligodendroglioma" = "O", 
+                              "astrocytoma" = "A", 
+                              "glioblastoma" = "GBM")) +
+  labs(title = "Cell Type Proportions by Tissue",
+       x = "Tissue",
+       y = "Proportion") +
+  theme_classic()
+
+
+
+
+proportion <- table(neuron_obj_cleaned$one_over_f_status, neuron_obj_cleaned$subclass_name)
+proportion <- as.data.frame(proportion)
+colnames(proportion) <- c("one_over_f_status", "type", "Freq")
+#proportion$type <- factor(proportion$type, levels = c("Neuronal: GABAergic", "Neuronal: Glutamatergic"))
+
+library(dplyr)
+proportion <- proportion %>%
+  group_by(one_over_f_status) %>%
+  mutate(prop = Freq / sum(Freq))
+
+# Define the color mapping for each cell type
+my_colors <- c(
+  "L2/3 IT"    = "#FEC89A",
+  "L4 IT"      = "#FCD5CE",
+  "L5 IT"      = "#FFDAB9",
+  "L6 IT"      = "#F49595",
+  "L6 IT Car3" = "#F1CEBE",
+  "L5 ET"      = "#F3D17C",
+  "L6 CT"      = "#FCEFB4",
+  "L5/6 NP"    = "#F9ED85",
+  "L6b"        = "#FFCAE9",
+  "Chandelier" = "#A9E4DE",
+  "Sst Chodl"  = "#83B8C6",
+  "Lamp5"      = "#D0E444",    
+  "Lamp5 Lhx6" = "#D0EDEF",
+  "Pax6"       = "#E1D3F8",
+  "Vip"        = "#B0B5ED", 
+  "Sncg"       = "#D6DFE8",
+  "Pvalb"      = "#8FC0E3",    
+  "Sst"        = "#7FB3D5"    
+)
+
+
+# Force the order of the cell types (fill/legend order) to match the order in my_colors
+proportion$type <- factor(proportion$type, levels = names(my_colors))
+
+# Plot the barplot and relabel the x-axis for abbreviated display
+library(ggplot2)
+ggplot(proportion, aes(x = one_over_f_status, y = prop, fill = type)) +
+  geom_bar(stat = "identity", width = 0.5) +
+  scale_fill_manual(values = my_colors) +
+  labs(title = "Cell Type Proportions by 1/F",
+       x = "Status",
+       y = "Proportion") +
+  theme_classic()
+
+
+proportion <- table(neuron_obj_cleaned$one_over_f_status, neuron_obj_cleaned$class_name)
+proportion <- as.data.frame(proportion)
+colnames(proportion) <- c("one_over_f_status", "type", "Freq")
+proportion$type <- factor(proportion$type, levels = c("Neuronal: GABAergic", "Neuronal: Glutamatergic"))
+
+library(dplyr)
+proportion <- proportion %>%
+  group_by(one_over_f_status) %>%
+  mutate(prop = Freq / sum(Freq))
+
+# Define the color mapping for each cell type
+my_colors <- c(
+  "Neuronal: Glutamatergic"    = "orange",
+  "Neuronal: GABAergic"      = "lightblue"
+)
+
+# Force the order of the cell types (fill/legend order) to match the order in my_colors
+proportion$type <- factor(proportion$type, levels = names(my_colors))
+
+# Plot the barplot and relabel the x-axis for abbreviated display
+library(ggplot2)
+ggplot(proportion, aes(x = one_over_f_status, y = prop, fill = type)) +
+  geom_bar(stat = "identity", width = 0.5) +
+  scale_fill_manual(values = my_colors) +
+  labs(title = "Cell Type Proportions by 1/F",
+       x = "Status",
+       y = "Proportion") +
+  theme_classic()
+
+
+
+
+#---------------------------------------------------------
+# Factor 'type' with the correct top->bottom order
+#---------------------------------------------------------
+proportion$type <- factor(
+  proportion$type,
+  levels = rev(names(my_colors))  # reverse so "L2/3 IT" is at the top
+)
+
+#---------------------------------------------------------
+# Single horizontal bar chart combining LOW & HIGH
+#---------------------------------------------------------
+# We'll annotate each bar with its raw proportion, e.g. 0.06 for 6%.
+# Using label_number() from scales to format.
+
+labeler <- label_number(accuracy = 0.001)  # 3 decimal places  # 2 decimal places
+
+
+ggplot(
+  proportion,
+  aes(
+    x = prop,                    # proportions on x-axis
+    y = type,                    # cell type on y-axis
+    fill = type,                 # color determined by cell type
+    pattern = one_over_f_status  # pattern determined by status
+  )
+) +
+  geom_bar_pattern(
+    stat = "identity",
+    width = 0.9,                 # bar width
+    position = position_dodge(width = 0.9),
+    # Outline for each bar:
+    colour = "black",           # bar outline color
+    size = 0.7,                  # bar outline thickness
+
+    # Pattern:
+    pattern_fill    = "black",
+    pattern_colour  = "black",
+    pattern_density = 0.1,       # coverage fraction
+    pattern_spacing = 0.03,      # spacing between stripes
+    pattern_size    = .7        # thickness of the stripes
+  ) +
+  # Label the proportion at the end of each bar
+  geom_text(
+    aes(
+      label = labeler(prop)  # e.g. 0.12
+    ),
+    position = position_dodge(width = 0.7),
+    vjust = 0.5,           # vertically center the label in the bar
+    hjust = -0.20,         # push the label slightly to the right of the bar end
+    size = 3               # adjust text size if desired
+  ) +
+  # Use your original cell-type colors, but override the fill legend so it doesn't show the dashed pattern.
+  scale_fill_manual(
+    values = my_colors,
+    guide = guide_legend(override.aes = list(pattern = "none"))
+  ) +
+  # Stripe for "low1overf", solid for "high1overf"
+  scale_pattern_manual(
+    values = c(
+      "low1overf"  = "stripe",
+      "high1overf" = "none"
+    ),
+    name = "1/F Status"  # optional custom legend title for pattern
+  ) +
+  labs(
+    title   = "Cell Type Proportions for Low vs. High 1/F (Horizontal)",
+    x       = "Proportion",
+    y       = "Cell Type",
+    fill    = "Type"         # optional custom legend title for fill
+  ) +
+  theme_classic()
+
+
+ggsave(filename="cell_proporiton_combined_1overf_labeled.pdf", path ="D:/Youssef Sibih/YS_Backup/Figs 3_24_25",
+       device = "pdf",           # output device
+       dpi = 600,                # nominal resolution for any raster elements
+       width = 8, height = 10,    # dimensions in inches
+       units = "in")             # unit of measurement
+```
+
+High vs Low acorss tumors
+
+
+```{r}
+library("clusterProfiler")
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+library(MAST)
+library(EnhancedVolcano)
+library(writexl)
+setwd("D:/Youssef Sibih/YS_Backup/Figs 3_24_25")
+
+neuron_obj_cleaned <- PrepSCTFindMarkers(neuron_obj_cleaned)
+neuron_obj_cleaned_tumor <- subset(neuron_obj_cleaned, subset = cortex_type %in% c("oligodendroglioma", "astrocytoma", "glioblastoma"))
+
+#neuron_obj_cleaned_tumor <- subset(neuron_obj_cleaned, subset = cortex_type  !%in% c("Normal Cortex"))
+
+
+Idents(neuron_obj_cleaned_tumor) <- "one_over_f_status"
+one_over_F_diff_tumor <- FindMarkers(neuron_obj_cleaned_tumor, ident.1 ="low1overf", ident.2 = "high1overf", verbose = FALSE)
+
+head (one_over_F_diff_tumor, n = 15 )
+
+  # Genes are stored as rownames, moving them to their own column
+  result <- cbind(Gene = rownames(one_over_F_diff_tumor), one_over_F_diff_tumor)
+
+  combined_list <- unique(c(excitatory_list[[1]], inhibitory_list[[1]]))
+  
+# Here's an example of creating a second, separate EnhancedVolcano plot
+# that labels ALL selected_threshold_genes, coloring them with your custom scheme,
+# and removing grid & dashed lines. We'll call this new object volcanoPlotWithLabels.
+
+library(EnhancedVolcano)
+
+# 1. Create a vector for point color:
+keyvals <- rep("grey", nrow(result))
+keyvals[result$avg_log2FC > 0.25] <-  "#18bdc2"
+keyvals[result$avg_log2FC < -0.25] <- "#f3766e"
+
+names(keyvals) <- rep("NS", length(keyvals))
+names(keyvals)[keyvals == "#18bdc2"] <- "FoldChange > 0.25"
+names(keyvals)[keyvals == "#f3766e"] <- "FoldChange < -0.25"
+
+# 2. Identify the genes that pass your fold-change threshold
+threshold_genes <- rownames(result)[abs(result$avg_log2FC) > 0.25]
+
+# 3. Subset your selected genes by those that actually pass the threshold
+ # Get only the genes that are present in both your result and the combined list
+  
+  selected_genes <- intersect(rownames(result), combined_list)
+  
+selected_threshold_genes <- intersect(selected_genes, threshold_genes)
+
+# 4. Make a new EnhancedVolcano plot that labels *all* these genes.
+#    We set pCutoff=NA and FCcutoff=NA to remove dashed lines,
+#    and max.overlaps=Inf to ensure none of them are hidden.
+volcanoPlotWithLabels <- EnhancedVolcano(
+  result,
+  lab           = rownames(result),
+  x             = "avg_log2FC",
+  y             = "p_val_adj",
+  selectLab     = selected_threshold_genes,   # label these genes only
+  colCustom     = keyvals,                    # color scheme
+  pCutoff       = NA,                         # remove p-value cutoff lines
+  FCcutoff      = NA,                         # remove fold-change cutoff lines
+  cutoffLineType= "blank",                   # no dashed lines
+  max.overlaps  = Inf,                        # ensure all labels appear
+  drawConnectors = TRUE,                      # optional: connect labels to points
+  title         = "Volcano Plot: Tumor (All Labels)"
+)
+
+# 5. Remove grid lines
+volcanoPlotWithLabels + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()
+)
+
+# 2. Create a new EnhancedVolcano plot with no labels.
+volcanoPlotNoLabels <- EnhancedVolcano(
+  result,
+  lab               = NA,        # Turn off labeling
+  x                 = "avg_log2FC",
+  y                 = "p_val_adj",
+  colCustom         = keyvals,   # same custom color scheme
+  pCutoff           = NA,        # remove p-value cutoff lines
+  FCcutoff          = NA,        # remove fold-change cutoff lines
+  cutoffLineType    = "blank",  # no dashed lines
+  title             = "Volcano Plot: Tumor (No Labels)"
+)
+
+# 3. Remove grid lines
+volcanoPlotNoLabels + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()
+)
+
+
+  
+  library(ggplot2)
+
+# 1. Convert 'result' to a data frame and store gene names:
+df <- as.data.frame(result)
+df$Gene <- rownames(df)
+
+# 2. Color by fold-change threshold:
+df$Color <- "grey"
+df$Color[df$avg_log2FC >  0.25] <- "#18bdc2" # 
+df$Color[df$avg_log2FC < -0.25] <- "#f3766e"   # 
+
+# 3. Identify your threshold genes & subset:
+threshold_genes <- df$Gene[abs(df$avg_log2FC) > 0.25]
+selected_threshold_genes <- intersect(selected_genes, threshold_genes)
+
+df_label <- df[df$Gene %in% selected_threshold_genes, ]
+
+# 4. Create a position index for a vertical stack:
+#    We'll plot them in the order they appear in df_label.
+df_label$Position <- seq_len(nrow(df_label))
+
+# 5. Make the plot:
+#    - We fix x=1 for everything so there's a single vertical line
+#    - 'y=Position' places each gene at a different vertical offset
+#    - 'scale_color_identity()' uses the hex codes in df_label$Color exactly
+#    - 'theme_void()' removes axes, grid lines, background
+#    - 'scale_y_reverse()' starts the first gene at the top
+p_vertical <- ggplot(df_label, aes(x = 1, y = Position, label = Gene)) +
+  geom_text(aes(color = Color), size = 5, hjust = 0.5) +
+  scale_color_identity() +
+  scale_y_reverse() +         # so the first gene is at the top
+  coord_cartesian(clip = "off") +
+  theme_void() +
+  ggtitle("Selected Genes Passing Threshold (±0.25)")
+
+p_vertical
+
+  
+  
+```
+Low one over f go
+
+```{r}
+library(ggplot2)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+
+#
+ct <- "AllTumor"
+# Filter genes using both avg_log2FC and adjusted p-value thresholds
+genes_to_test <- rownames(result[result$avg_log2FC > 0.25 & result$p_val_adj < 0.05, ])
+
+# Perform GO Enrichment for different ontology categories
+Go_results1 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "MF", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results2 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "CC", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results3 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "BP", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results4 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "ALL", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
+
+# Function to generate and save dotplots with fixed color
+save_dotplot <- function(go_results, filename) {
+  fit <- dotplot(go_results, showCategory = 8) +
+    aes(shape = I(16), color = I("#18bdc2")) +  # Set fixed color
+    theme(legend.position = "right") +
+  guides(fill="none")
+
+  ggsave(
+    filename = filename,
+    plot = fit,
+    device = "pdf",
+    width = 8,
+    height = 14
+  )
+}
+
+# Save dot plots for each GO result
+save_dotplot(Go_results1, paste0(ct, "_GO_MF_lower1overf_dotplot.pdf"))
+save_dotplot(Go_results2, paste0(ct, "_GO_CC_lower1overf_dotplot.pdf"))
+save_dotplot(Go_results3, paste0(ct, "_GO_BP_lower1overf_dotplot.pdf"))
+save_dotplot(Go_results4, paste0(ct, "_GO_ALL_lower1overf_dotplot.pdf"))
+
+```
+high one over f tumor
+```{r}
+# Filter genes using both avg_log2FC and adjusted p-value thresholds
+genes_to_test <- rownames(result[result$avg_log2FC < -0.25 & result$p_val_adj < 0.05, ])
+
+# Perform GO Enrichment for different ontology categories
+Go_results5 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "MF", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results6 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "CC", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results7 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "BP", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results8 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "ALL", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
+
+# Function to generate and save dotplots with fixed color
+ 
+save_dotplot_2 <- function(go_results, filename) {
+  fit <- dotplot(go_results, showCategory = 8, orderBy = "GeneRatio") +
+    aes(shape = I(16), color = I("#f3766e")) +  # Set fixed color
+    theme(legend.position = "right") +
+  guides(fill="none")
+
+  
+  ggsave(
+    filename = filename,
+    plot = fit,
+    device = "pdf",
+    width = 8,
+    height = 14
+  )
+}
+
+# Save dot plots for each GO result
+save_dotplot_2(Go_results5, paste0(ct, "_GO_MF_high1overf_dotplot.pdf"))
+save_dotplot_2(Go_results6, paste0(ct, "_GO_CC_high1overf_dotplot.pdf"))
+save_dotplot_2(Go_results7, paste0(ct, "_GO_BP_high1overf_dotplot.pdf"))
+save_dotplot_2(Go_results8, paste0(ct, "_GO_ALL_high1overf_dotplot.pdf"))
+```
+
+Normal cortex
+```{r}
+neuron_obj_cleaned <- PrepSCTFindMarkers(neuron_obj_cleaned)
+neuron_obj_cleaned_normal <- subset(neuron_obj_cleaned, subset = cortex_type %in% c("Normal Cortex"))
+neuron_obj_cleaned_normal <- PrepSCTFindMarkers(neuron_obj_cleaned_normal)  # Re-run after subsetting
+
+
+Idents(neuron_obj_cleaned_normal) <- "one_over_f_status"
+
+one_over_F_diff_normal <- FindMarkers(neuron_obj_cleaned_normal, ident.1 ="low1overf", ident.2 = "high1overf", verbose = FALSE)
+
+head (one_over_F_diff_normal, n = 15 )
+
+  # Genes are stored as rownames, moving them to their own column
+  result_normal <- cbind(Gene = rownames(one_over_F_diff_normal), one_over_F_diff_normal)
+
+  combined_list <- unique(c(excitatory_list[[1]], inhibitory_list[[1]]))
+  
+# Here's an example of creating a second, separate EnhancedVolcano plot
+# that labels ALL selected_threshold_genes, coloring them with your custom scheme,
+# and removing grid & dashed lines. We'll call this new object volcanoPlotWithLabels.
+
+library(EnhancedVolcano)
+
+# 1. Create a vector for point color:
+keyvals <- rep("grey", nrow(result_normal))
+keyvals[result_normal$avg_log2FC > 0.25] <-  "#18bdc2"
+keyvals[result_normal$avg_log2FC < -0.25] <- "#f3766e"
+
+names(keyvals) <- rep("NS", length(keyvals))
+names(keyvals)[keyvals == "#18bdc2"] <- "FoldChange > 0.25"
+names(keyvals)[keyvals == "#f3766e"] <- "FoldChange < -0.25"
+
+# 2. Identify the genes that pass your fold-change threshold
+threshold_genes <- rownames(result_normal)[abs(result_normal$avg_log2FC) > 0.25]
+
+# 3. Subset your selected genes by those that actually pass the threshold
+ # Get only the genes that are present in both your result and the combined list
+  
+  selected_genes <- intersect(rownames(result_normal), combined_list)
+  
+selected_threshold_genes <- intersect(selected_genes, threshold_genes)
+
+# 4. Make a new EnhancedVolcano plot that labels *all* these genes.
+#    We set pCutoff=NA and FCcutoff=NA to remove dashed lines,
+#    and max.overlaps=Inf to ensure none of them are hidden.
+volcanoPlotWithLabels <- EnhancedVolcano(
+  result_normal,
+  lab           = rownames(result_normal),
+  x             = "avg_log2FC",
+  y             = "p_val_adj",
+  selectLab     = selected_threshold_genes,   # label these genes only
+  colCustom     = keyvals,                    # color scheme
+  pCutoff       = NA,                         # remove p-value cutoff lines
+  FCcutoff      = NA,                         # remove fold-change cutoff lines
+  cutoffLineType= "blank",                   # no dashed lines
+  max.overlaps  = Inf,                        # ensure all labels appear
+  drawConnectors = TRUE,                      # optional: connect labels to points
+  title         = "Normal Cortex Volcano Plot: (All Labels)"
+)
+
+# 5. Remove grid lines
+volcanoPlotWithLabels + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()
+)
+
+# 2. Create a new EnhancedVolcano plot with no labels.
+volcanoPlotNoLabels <- EnhancedVolcano(
+  result_normal,
+  lab               = NA,        # Turn off labeling
+  x                 = "avg_log2FC",
+  y                 = "p_val_adj",
+  colCustom         = keyvals,   # same custom color scheme
+  pCutoff           = NA,        # remove p-value cutoff lines
+  FCcutoff          = NA,        # remove fold-change cutoff lines
+  cutoffLineType    = "blank",  # no dashed lines
+  title             = "Volcano Plot: Normal Cortex (No Labels)"
+)
+
+# 3. Remove grid lines
+volcanoPlotNoLabels + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()
+)
+
+
+  
+  library(ggplot2)
+
+# 1. Convert 'result' to a data frame and store gene names:
+df <- as.data.frame(result_normal)
+df$Gene <- rownames(df)
+
+# 2. Color by fold-change threshold:
+df$Color <- "grey"
+df$Color[df$avg_log2FC >  0.25] <- "#18bdc2" # 
+df$Color[df$avg_log2FC < -0.25] <- "#f3766e"   # 
+
+# 3. Identify your threshold genes & subset:
+threshold_genes <- df$Gene[abs(df$avg_log2FC) > 0.25]
+selected_threshold_genes <- intersect(selected_genes, threshold_genes)
+
+df_label <- df[df$Gene %in% selected_threshold_genes, ]
+
+# 4. Create a position index for a vertical stack:
+#    We'll plot them in the order they appear in df_label.
+df_label$Position <- seq_len(nrow(df_label))
+
+# 5. Make the plot:
+#    - We fix x=1 for everything so there's a single vertical line
+#    - 'y=Position' places each gene at a different vertical offset
+#    - 'scale_color_identity()' uses the hex codes in df_label$Color exactly
+#    - 'theme_void()' removes axes, grid lines, background
+#    - 'scale_y_reverse()' starts the first gene at the top
+p_vertical <- ggplot(df_label, aes(x = 1, y = Position, label = Gene)) +
+  geom_text(aes(color = Color), size = 5, hjust = 0.5) +
+  scale_color_identity() +
+  scale_y_reverse() +         # so the first gene is at the top
+  coord_cartesian(clip = "off") +
+  theme_void() +
+  ggtitle("Selected Genes Passing Threshold (±0.25)")
+
+p_vertical
+  
+```
+lowone over f normal
+```{r}
+
+#
+ct <- "Normal"
+# Filter genes using both avg_log2FC and adjusted p-value thresholds
+genes_to_test <- rownames(result_normal[result_normal$avg_log2FC > 0.25 & result_normal$p_val_adj < 0.05, ])
+
+# Perform GO Enrichment for different ontology categories
+Go_results1 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "MF", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results2 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "CC", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results3 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "BP", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results4 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "ALL", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
+
+# Function to generate and save dotplots with fixed color
+save_dotplot <- function(go_results, filename) {
+  fit <- dotplot(go_results, showCategory = 15) +
+    aes(shape = I(16), color = I("#18bdc2")) +  # Set fixed color
+    theme(legend.position = "right") +
+  guides(fill="none")
+
+  ggsave(
+    filename = filename,
+    plot = fit,
+    device = "pdf",
+    width = 8,
+    height = 14
+  )
+}
+
+# Save dot plots for each GO result
+save_dotplot(Go_results1, paste0(ct, "_GO_MF_lower1overf_dotplot.pdf"))
+save_dotplot(Go_results2, paste0(ct, "_GO_CC_lower1overf_dotplot.pdf"))
+save_dotplot(Go_results3, paste0(ct, "_GO_BP_lower1overf_dotplot.pdf"))
+save_dotplot(Go_results4, paste0(ct, "_GO_ALL_lower1overf_dotplot.pdf"))
+```
+Top 8 gene set
+```{r}
+#---------------------------------------------------------
+# GO Enrichment and Dotplot Saving for Top 8 Categories
+#---------------------------------------------------------
+
+ct <- "Normal"
+
+# Filter genes using both avg_log2FC and adjusted p-value thresholds
+genes_to_test <- rownames(result_normal[result_normal$avg_log2FC > 0.25 & result_normal$p_val_adj < 0.05, ])
+
+# Perform GO Enrichment for different ontology categories
+Go_results1 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "MF", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results2 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "CC", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results3 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "BP", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results4 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "ALL", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
+
+# Function to generate and save dotplots with fixed color for top 8 categories by gene ratio
+save_dotplot <- function(go_results, filename) {
+  fit <- dotplot(go_results, showCategory = 8, orderBy = "GeneRatio") +
+    aes(shape = I(16), color = I("#18bdc2")) +  # Set fixed color
+    theme(legend.position = "right") +
+    guides(fill = "none")
+
+  ggsave(
+    filename = filename,
+    plot = fit,
+    device = "pdf",
+    width = 8,
+    height = 14
+  )
+}
+
+# Save dot plots for each GO result
+save_dotplot(Go_results1, paste0(ct, "_GO_MF_lower1overf_dotplot.pdf"))
+save_dotplot(Go_results2, paste0(ct, "_GO_CC_lower1overf_dotplot.pdf"))
+save_dotplot(Go_results3, paste0(ct, "_GO_BP_lower1overf_dotplot.pdf"))
+save_dotplot(Go_results4, paste0(ct, "_GO_ALL_lower1overf_dotplot.pdf"))
+
+```
+
+
+
+hihg one over f go
+
+```{r}
+library(ggplot2)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+# Filter genes using both avg_log2FC and adjusted p-value thresholds
+genes_to_test <- rownames(result_normal[result_normal$avg_log2FC < -0.25 & result_normal$p_val_adj < 0.05, ])
+
+# Perform GO Enrichment for different ontology categories
+Go_results5 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "MF", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results6 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "CC", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results7 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "BP", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results8 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "ALL", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
+
+# Function to generate and save dotplots with fixed color
+ 
+save_dotplot_2 <- function(go_results, filename) {
+  fit <- dotplot(go_results, showCategory = 15) +
+    aes(shape = I(16), color = I("#f3766e")) +  # Set fixed color
+    theme(legend.position = "right") +
+  guides(fill="none")
+
+  
+  ggsave(
+    filename = filename,
+    plot = fit,
+    device = "pdf",
+    width = 8,
+    height = 14
+  )
+}
+
+# Save dot plots for each GO result
+save_dotplot_2(Go_results5, paste0(ct, "_GO_MF_high1overf_dotplot.pdf"))
+save_dotplot_2(Go_results6, paste0(ct, "_GO_CC_high1overf_dotplot.pdf"))
+save_dotplot_2(Go_results7, paste0(ct, "_GO_BP_high1overf_dotplot.pdf"))
+save_dotplot_2(Go_results8, paste0(ct, "_GO_ALL_high1overf_dotplot.pdf"))
+
+```
+top 8 high oneover f
+```{r}
+library(ggplot2)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+# Filter genes using both avg_log2FC and adjusted p-value thresholds
+genes_to_test <- rownames(result_normal[result_normal$avg_log2FC < -0.25 & result_normal$p_val_adj < 0.05, ])
+
+# Perform GO Enrichment for different ontology categories
+Go_results5 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "MF", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results6 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "CC", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results7 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "BP", pvalueCutoff = 0.01, qvalueCutoff = 0.05)
+Go_results8 <- enrichGO(gene = genes_to_test, OrgDb = "org.Hs.eg.db", keyType = "SYMBOL", ont = "ALL", pvalueCutoff = 0.05, qvalueCutoff = 0.05)
+
+# Function to generate and save dotplots with fixed color
+ 
+save_dotplot_2 <- function(go_results, filename) {
+  fit <- dotplot(go_results, showCategory = 8, orderBy = "GeneRatio") +
+    aes(shape = I(16), color = I("#f3766e")) +  # Set fixed color
+    theme(legend.position = "right") +
+  guides(fill="none")
+
+  
+  ggsave(
+    filename = filename,
+    plot = fit,
+    device = "pdf",
+    width = 8,
+    height = 14
+  )
+}
+
+# Save dot plots for each GO result
+save_dotplot_2(Go_results5, paste0(ct, "_GO_MF_high1overf_dotplot.pdf"))
+save_dotplot_2(Go_results6, paste0(ct, "_GO_CC_high1overf_dotplot.pdf"))
+save_dotplot_2(Go_results7, paste0(ct, "_GO_BP_high1overf_dotplot.pdf"))
+save_dotplot_2(Go_results8, paste0(ct, "_GO_ALL_high1overf_dotplot.pdf"))
+```
+
+
+
+
+Use:GOCC_EXCITATORY_SYNAPSE
+
+Use: GOCC_INHIBITORY_SYNAPSE
+
+```{r}
+# Load required libraries
+library(clusterProfiler)
+library(dplyr)
+library(DOSE)
+
+# 1. Prepare Gene List for GSEA (Directly from `result`)
+################################################################################
+
+# Sort genes by log2 fold change (descending)
+  result <- cbind(Gene = rownames(one_over_F_diff_tumor), one_over_F_diff_tumor)
+
+result$stat <- result$avg_log2FC
+
+result <- result[order(-result$stat),]
+
+# Create named vector for GSEA
+gene_list <- result$stat
+names(gene_list) <- result$Gene
+
+# Ensure gene list is a named numeric vector
+if (!is.numeric(gene_list) || is.null(names(gene_list))) {
+  stop("gene_list must be a named numeric vector.")
+}
+
+# 2. Define Custom Excitatory Gene Set
+################################################################################
+
+excitatory_list <- c("SLC17A6", "SLC17A7", "SLC17A8", "GRIA1", "GRIA2", "GRIA3", "GRIA4",
+                     "GRIN1", "GRIN2A", "GRIN2B", "GRIN2C", "GRIN2D", "GRIN3A", "GRIN3B",
+                     "GRM1", "GRM2", "GRM3", "GRM4", "GRM5", "GRM6", "GRM7", "GRM8", "TBR1",
+                     "FEZF2", "NEUROD1", "CTIP2", "SATB2", "CAMK2A", "CAMK2B", "NRGN", "SYT1",
+                     "PSD95", "DLG4", "SHANK1", "SHANK2", "SHANK3", "HOMER1", "HOMER2",
+                     "HOMER3", "VAMP1", "VAMP2")
+
+# Convert to GSEA input format
+term2gene_custom <- data.frame(pathwayID = "Excitatory_Genes", geneSymbol = excitatory_list)
+term2name_custom <- data.frame(pathwayID = "Excitatory_Genes", pathwayName = "Excitatory Synaptic Genes")
+
+# Check gene overlap
+matching_genes <- intersect(names(gene_list), term2gene_custom$geneSymbol)
+if (length(matching_genes) == 0) {
+  stop("No matching genes found between input gene list and excitatory gene set. Check gene names.")
+}
+
+# 3. Perform GSEA
+################################################################################
+
+gse_results <- GSEA(gene_list, TERM2GENE = term2gene_custom, TERM2NAME = term2name_custom)
+
+# Convert results to a dataframe
+gse_df <- as.data.frame(gse_results)
+
+# Print results
+print(gse_df)
+
+# 4. Plot GSEA Results
+################################################################################
+
+fit <- gseaplot(gse_results, geneSetID = "Excitatory_Genes")
+
+png("gsea_excitatory.png", res = 250, width = 2000, height = 1300)
+print(fit)
+dev.off()
+
+fit
+
+
+fit2 <- gseaplot(gse_results, geneSetID = "Excitatory_Genes")
+
+png("gsea_excitatory.png", res = 250, width = 2000, height = 1300)
+print(fit)
+dev.off()
+
+fit
+```
+Using fgsea
+https://www.youtube.com/watch?v=WwjbCgTy_Z0&ab_channel=SingleCellGenomics%2CTranscriptomics%26Proteomics
+
+```{r}
+library(tidyverse)
+library(fgsea)
+set.seed(213)
+#Load DEG analysis
+result <- cbind(Gene = rownames(one_over_F_diff_tumor), one_over_F_diff_tumor)
+
+DEG_AllTumor <- result
+
+DEG_AllTumor <- DEG_AllTumor %>% arrange(desc(avg_log2FC))
+
+fold_changes <- DEG_AllTumor$avg_log2FC
+names(fold_changes) <- DEG_AllTumor$Gene
+
+head(fold_changes)
+
+# Load GSEA gene sets: http://www.gsea-msigdb.org/gsea/msigdb/index.jsp
+Excitatory_GSEA <- fgsea::gmtPathways("D:/AbrahamDada/GSEA/GOCC_EXCITATORY_SYNAPSE.v2024.1.Hs.gmt")
+#Excitatory_GSEA <- fgsea::gmtPathways("D:/AbrahamDada/GSEA/GOCC_GLUTAMATERGIC_SYNAPSE.v2024.1.Hs.gmt")
+
+Inhibitory_GSEA <- fgsea::gmtPathways("D:/AbrahamDada/GSEA/GOCC_INHIBITORY_SYNAPSE.v2024.1.Hs.gmt")
+
+hallmarks_GSEA <-  fgsea::gmtPathways("D:/AbrahamDada/GSEA/h.all.v2024.1.Hs.symbols.gmt")
+
+go_bp_GSEA <- fgsea::gmtPathways("D:/AbrahamDada/GSEA/c5.go.v2024.1.Hs.symbols.gmt")
+
+# GSEA analysis
+gsea_Excit_results <- fgsea(pathways = Excitatory_GSEA,
+                  stats = fold_changes,
+                  eps = 0.0, #setting to zero gives accurate pavlue
+                  minSize=5,
+                  maxSize=500)
+
+head(gsea_Excit_results[order(pval), ])
+
+gsea_Inhib_results <- fgsea(pathways = Inhibitory_GSEA,
+                  stats = fold_changes,
+                  eps = 0.0, #setting to zero gives accurate pavlue
+                  minSize=5,
+                  maxSize=500)
+head(gsea_Inhib_results[order(pval), ])
+
+gsea_hallmark_results<-fgsea(pathways = hallmarks_GSEA,
+                  stats = fold_changes,
+                  eps = 0.0, #setting to zero gives accurate pavlue
+                  minSize=5,
+                  maxSize=500)
+
+gsea_bp_results<-fgsea(pathways = go_bp_GSEA ,
+                  stats = fold_changes,
+                  eps = 0.0, #setting to zero gives accurate pavlue
+                  minSize=15,
+                  maxSize=500,
+                  nproc=1)
+
+#fwrite(gsea_bp_results, "gsea_bp_results.csv")
+
+# make an enrichment plot for a pathway:
+GSEA_plot_excit <- plotEnrichment(Excitatory_GSEA[["GOCC_EXCITATORY_SYNAPSE"]],
+               fold_changes) + labs(title="Excitatory Enrichment")
+GSEA_plot_excit
+
+GSEA_plot_glut <- plotEnrichment(go_bp_GSEA[["GOMF_GLUTAMATE_RECEPTOR_ACTIVITY"]],
+               fold_changes) + labs(title="Glutamatergic Enrichment")
+GSEA_plot_glut
+
+
+
+GSEA_plot_inhib <- plotEnrichment(Inhibitory_GSEA[["GOCC_INHIBITORY_SYNAPSE"]],
+               fold_changes) + labs(title="Inhibitory Enrichment")
+GSEA_plot_inhib
+
+
+# make a table plot for a bunch of selected pathways:
+topPathwaysUp <- gsea_hallmark_results[ES > 0][head(order(pval), n=10), pathway]
+topPathwaysDown <- gsea_hallmark_results[ES < 0][head(order(pval), n=10), pathway]
+topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
+plotGseaTable(hallmarks_GSEA [topPathways], fold_changes, gsea_hallmark_results, 
+              gseaParam=0.5)
+
+topPathwaysUp <- gsea_bp_results[ES > 0][head(order(pval), n=10), pathway]
+topPathwaysDown <- gsea_bp_results[ES < 0][head(order(pval), n=10), pathway]
+topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
+plotGseaTable(hallmarks_GSEA [topPathways], fold_changes, gsea_bp_results, 
+              gseaParam=0.5)
+
+
+
+library(ggplot2)
+library(dplyr)
+
+# Extract NES and padj for excitatory synapse
+excitation_nes <- gsea_Excit_results %>%
+  filter(pathway == "GOCC_EXCITATORY_SYNAPSE") %>%
+  pull(NES)
+
+excitation_padj <- gsea_Excit_results %>%
+  filter(pathway == "GOCC_EXCITATORY_SYNAPSE") %>%
+  pull(padj)
+
+# Generate Excitatory Enrichment Plot with NES and Adjusted P-value
+GSEA_plot_excit <- plotEnrichment(Excitatory_GSEA[["GOCC_EXCITATORY_SYNAPSE"]],
+                                  fold_changes) +
+  labs(title = "Excitatory Enrichment") +
+  annotate("text", x = 500, y = 0.5, 
+           label = paste("NES:", round(excitation_nes, 2),
+                         "\nAdjusted P-value:", formatC(excitation_padj, format = "e", digits = 3)),
+           size = 5, hjust = 0)
+
+# Display the plot
+GSEA_plot_excit
+
+# Extract NES and padj for inhibitory synapse
+inhibition_nes <- gsea_Inhib_results %>%
+  filter(pathway == "GOCC_INHIBITORY_SYNAPSE") %>%
+  pull(NES)
+
+inhibition_padj <- gsea_Inhib_results %>%
+  filter(pathway == "GOCC_INHIBITORY_SYNAPSE") %>%
+  pull(padj)
+
+# Generate Inhibitory Enrichment Plot with NES and Adjusted P-value
+GSEA_plot_inhib <- plotEnrichment(Inhibitory_GSEA[["GOCC_INHIBITORY_SYNAPSE"]],
+                                  fold_changes) +
+  labs(title = "Inhibitory Enrichment") +
+  annotate("text", x = 500, y = 0.5, 
+           label = paste("NES:", round(inhibition_nes, 2),
+                         "\nAdjusted P-value:", formatC(inhibition_padj, format = "e", digits = 3)),
+           size = 5, hjust = 0)
+
+# Display the plot
+GSEA_plot_inhib
+
+
+
+library(dplyr)
+
+# Define keywords to filter pathways
+neuro_keywords <- c("NEUROTRANSMITTER", "GLUTAMATE", "GABA", "EXCITATORY", "INHIBITORY", "SYNAPSE", "NEURON")
+#added channel and trnasporter to find chloride stuff  #CHANNEL TRANSPORTER CHLORIDE
+
+# Filter gsea_bp_results for neurotransmitter/neuronal-related pathways
+gsea_neuro_results <- gsea_bp_results %>%
+  filter(grepl(paste(neuro_keywords, collapse = "|"), pathway, ignore.case = TRUE)) %>%
+  filter(padj < 0.05) %>%  # Keep only significant pathways
+  arrange(desc(NES))  # Sort by NES (highest enrichment first)
+
+# Extract pathways that pass filtering
+neuro_pathways <- gsea_neuro_results$pathway
+
+# Generate the GSEA table for selected pathways
+plotGseaTable(go_bp_GSEA[neuro_pathways], fold_changes, gsea_neuro_results, gseaParam=0.5)
+
+library(ggplot2)
+library(dplyr)
+library(stringr)
+
+library(ggplot2)
+library(dplyr)
+library(stringr)
+
+# Step 1: Define shortened pathway labels
+pathway_labels <- c(
+  "Neurotransmitter Receptor Activity", "Neurotransmitter Receptor Complex", "Glutamate Receptor Activity",  
+  "Postsynaptic Receptor Activity", "Membrane Potential Regulation", "Neuron Projection Mebrane", 
+  "Ionotropic Glutamate Receptor Signaling", "Neurotransmitter Secretion", 
+  "Glutamatergic Synaptic Transmission", "Neuron Projecetion Regeneration", "Forebrain Neuron Generation", 
+  "Negative Regulation of Neuron Differentiation", "Forebrain Differentiation", 
+  "Positive Regulation of Glutamatergic Synaptic Transmission", "Regulation of Neuron Differentiation", 
+  "Negative Regulation of Neuron Projection Development"
+)
+
+# Step 2: Prepare data, sorting NES in descending order
+gsea_neuro_results <- gsea_neuro_results %>%
+  arrange(desc(NES)) %>%
+  mutate(
+    pathway_short = pathway_labels,  # Assign predefined pathway labels
+    log_padj = -log10(padj),  # Convert padj to -log10 scale
+    pathway_label = paste0(pathway_short, "   ", format(round(NES, 2), nsmall = 2))  # Append NES to pathway name with spaces
+  )
+
+# Step 3: Generate Dot Plot with Modified Y-Axis Labels
+p <- ggplot(gsea_neuro_results, aes(x = log_padj, y = reorder(pathway_label, NES), color = NES)) +
+  geom_point(size = 4, alpha = 0.8) +  # Uniform dot size
+  scale_color_gradient2(low = "#F3766E", mid = "white", high = "#18BDC2", midpoint = 0, guide = "none") +  # Custom NES color mapping
+  labs(x = "-log10(Adjusted P-value)", y = NULL,  
+       title = "Neuronal Biophysical Processes GSEA",
+      subtitle = ("Low 1/f vs High 1/f")) +
+  theme_minimal() +
+  theme(
+    axis.title.y = element_blank(),  # Hide Y-axis label
+    axis.text.y = element_text(size = 10),  # Adjust pathway label size
+    axis.text.x = element_text(size = 12),
+    plot.title = element_text(size = 14,hjust = 0.5),
+   plot.subtitle = element_text(size = 14, hjust = 0.5) 
+  )
+
+# Step 4: Display the final plot
+p
+
+
+
+```
+
+```{r}
+library(clusterProfiler)
+library(enrichplot)
+
+# Prepare gene list
+geneList <- sort(fold_changes, decreasing = TRUE)
+
+# Format gene set for clusterProfiler (TERM2GENE format)
+Excit_synapse_t2g <- tibble(term = "Excitatory Synapse", 
+                            gene = Excitatory_GSEA[["GOCC_EXCITATORY_SYNAPSE"]])
+
+# Run GSEA with clusterProfiler
+gsea_cp_result <- GSEA(geneList = geneList,
+                       TERM2GENE = Excit_synapse_t2g,
+                       pvalueCutoff = 1,
+                       verbose = FALSE)
+
+# Plot the results
+gsea_plot_1 <- gseaplot2(gsea_cp_result, 
+          geneSetID = 1,
+          title = "Excitatory Synapse Enrichment")
+
+# Save as PDF (vector format, dpi not strictly needed but included)
+ggsave(filename = paste0("ExcitatorySynapseEnrichment_v2", ".pdf"),
+       plot = gsea_plot_1,
+       device = cairo_pdf,  # high-quality vector output
+       width = 7, height = 5, dpi = 600)
+
+# Extract NES and adjusted p-value from the result
+res <- gsea_cp_result@result
+nes <- round(res$NES[1], 2)
+padj <- formatC(res$p.adjust[1], format = "e", digits = 2)
+title_text <- "Excitatory Synapse Enrichment"
+
+library(ggplot2)
+
+# Create a text-only plot
+text_plot <- ggplot() +
+  theme_void() +
+  annotate("text", x = 0.5, y = 0.7, label = title_text, size = 7, fontface = "bold", hjust = 0.5) +
+  annotate("text", x = 0.5, y = 0.5, label = paste("NES:", nes), size = 6, hjust = 0.5) +
+  annotate("text", x = 0.5, y = 0.3, label = paste("Adjusted P-value:", padj), size = 6, hjust = 0.5) +
+  xlim(0, 1) + ylim(0, 1)
+
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(stringr)
+
+# Step 1: Define shortened pathway labels (ensure dynamic adjustment)
+pathway_labels <- c(
+  "Neurotransmitter Receptor Activity", "Neurotransmitter Receptor Complex", "Glutamate Receptor Activity",  
+  "Postsynaptic Receptor Activity", "Membrane Potential Regulation", "Neuron Projection Membrane", 
+  "Ionotropic Glutamate Receptor Signaling", "Neurotransmitter Secretion", 
+  "Glutamatergic Synaptic Transmission", "Neuron Projection Regeneration", "Forebrain Neuron Generation", 
+  "Negative Regulation of Neuron Differentiation", "Forebrain Differentiation", 
+  "Positive Regulation of Glutamatergic Synaptic Transmission", "Regulation of Neuron Differentiation"
+)
+
+# Ensure `pathway_labels` matches the number of filtered pathways
+if (length(pathway_labels) != nrow(gsea_neuro_results)) {
+  warning("Mismatch in pathway labels and filtered GSEA results! Adjusting labels...")
+  pathway_labels <- pathway_labels[seq_len(nrow(gsea_neuro_results))]  # Adjust length to match data
+}
+
+# Step 2: Prepare data, sorting NES in descending order
+gsea_neuro_results <- gsea_neuro_results %>%
+  arrange(desc(NES)) %>%
+  mutate(
+    pathway_short = pathway_labels,  # Assign dynamically adjusted pathway labels
+    log_padj = -log10(padj),  # Convert padj to -log10 scale
+    pathway_label = paste0(pathway_short, "   ", format(round(NES, 2), nsmall = 2))  # Append NES to pathway name with spaces
+  )
+
+# Step 3: Generate Dot Plot with Modified Y-Axis Labels
+p <- ggplot(gsea_neuro_results, aes(x = log_padj, y = reorder(pathway_label, NES), color = NES)) +
+  geom_point(size = 4, alpha = 0.8) +  # Uniform dot size
+  scale_color_gradient2(low = "#F3766E", mid = "white", high = "#18BDC2", midpoint = 0, guide = "none") +  # Custom NES color mapping
+  labs(x = "-log10(Adjusted P-value)", y = NULL,  
+       title = "Neuronal Biophysical Processes GSEA",
+       subtitle = "Low 1/f vs High 1/f") +
+  theme_minimal() +
+  theme(
+    axis.title.y = element_blank(),  # Hide Y-axis label
+    axis.text.y = element_text(size = 10),  # Adjust pathway label size
+    axis.text.x = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5),  # Center title
+    plot.subtitle = element_text(size = 14, hjust = 0.5)  # Center subtitle
+  )
+
+# Step 4: Display the final plot
+p
+
+
+```
+
+
+
+
+
+```{r}
+library("clusterProfiler")
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+library(MAST)
+library(EnhancedVolcano)
+library(writexl)
+setwd("C:/YS_Backup/figs_2_2_25")
+
+neuron_obj_cleaned <- PrepSCTFindMarkers(neuron_obj_cleaned)
+# Get unique cortex types without global SCT preparation
+types <- unique(neuron_obj_cleaned$cortex_type)
+
+#for talk
+#types <- c("glioblastoma", "Normal Cortex")
+
+setwd("C:/YS_Backup/figs_2_2_25")
+for(ct in types) {
+  # Subset the object for the current cortex_type
+  sub_obj <- subset(neuron_obj_cleaned, subset = cortex_type == ct)
+  
+  
+  # Perform differential expression analysis for the current subset
+  result <- FindMarkers(
+    sub_obj, 
+    ident.1 = "high1overf",
+    group.by="one_over_f_status",
+    logfc.threshold = 0, #for normal and GBM
+    min.pct=0, #for normal and GBM
+    verbose = FALSE,
+    recorrect_umi=FALSE, 
+    #Pausing for length for GBM and Normal Cortex1test.use="MAST", latent.vars="exp"
+  )
+  
+  # Genes are stored as rownames, moving them to their own column
+  result <- cbind(Gene = rownames(result), result)
+
+  combined_list <- unique(c(excitatory_list[[1]], inhibitory_list[[1]]))
+  
+  # Get only the genes that are present in both your result and the combined list
+  
+  selected_genes <- intersect(rownames(result), combined_list)
+
+  # Generate volcano plot with EnhancedVolcano
+  volcanoPlot <- EnhancedVolcano(
+    result,
+    rownames(result),
+    x = "avg_log2FC",
+    y = "p_val_adj",
+    selectLab = selected_genes,  # Only label genes in the combined list,
+    title = paste("Volcano plot:", ct)
+  )
+  
+
+  # Save volcano plot as PDF
+  pdf_filename <- paste0(ct, "_volcano_lowerT.pdf")
+  ggsave(
+    filename = pdf_filename,
+    plot = volcanoPlot,
+    device = "pdf",
+    width = 8, height = 6
+  )
+  
+  # Save differential expression results as Excel file
+  excel_filename <- paste0(ct, "_neuron_diffExpression_LowerT.xlsx")
+  write_xlsx(result, path = excel_filename)
+  
+   genes_to_test<- rownames(result[result$avg_log2FC >0.5,]) #arbitrary cut off can change
+  Go_results1 <- enrichGO(gene =genes_to_test, OrgDb = "org.Hs.eg.db", key= "SYMBOL", ont ="MF",pvalueCutoff = 0.01, qvalueCutoff = 0.05 ) #cutoff from mrichia paper
+  
+  fit1 <-plot(barplot(Go_results1, showCategory = 15))+ggtitle("Molecular Function Enrichment in High vs Low 1/f Neurons of ", ct) #show top 15
+  # Save volcano plot as PDF
+  pdf_filename <- paste0(ct, "_GO_MF_lowerT.pdf")
+  ggsave(
+    filename = pdf_filename,
+    plot = fit1,
+    device = "pdf",
+    width = 10, height = 20
+  )
+  
+   Go_results2 <- enrichGO(gene =genes_to_test, OrgDb = "org.Hs.eg.db", key= "SYMBOL", ont ="CC",pvalueCutoff = 0.01, qvalueCutoff = 0.05 ) #cutoff from mrichia paper
+  
+  fit2 <-plot(barplot(Go_results2, showCategory = 15))+ggtitle("Cellular Component  Enrichment in High vs Low 1/f Neurons of ", ct) #show top 15
+  # Save volcano plot as PDF
+  pdf_filename <- paste0(ct, "_GO_CC_lowerT.pdf")
+  ggsave(
+    filename = pdf_filename,
+    plot = fit2,
+    device = "pdf",
+    width = 10, height = 20
+  )
+  
+   Go_results3 <- enrichGO(gene =genes_to_test, OrgDb = "org.Hs.eg.db", key= "SYMBOL", ont ="BP",pvalueCutoff = 0.01, qvalueCutoff = 0.05 ) #cutoff from mrichia paper
+  
+  fit3 <-plot(barplot(Go_results3, showCategory = 15))+ggtitle("Biological Processes  Enrichment in High vs Low 1/f Neurons of ", ct) #show top 15
+  # Save volcano plot as PDF
+  pdf_filename <- paste0(ct, "_GO_BP_lowerT.pdf")
+  ggsave(
+    filename = pdf_filename,
+    plot = fit3,
+    device = "pdf",
+    width = 10, height = 20
+  )
+  
+    Go_results4 <- enrichGO(gene =genes_to_test, OrgDb = "org.Hs.eg.db", key= "SYMBOL", ont ="All",pvalueCutoff = 0.05, qvalueCutoff = 0.05) 
+  
+  fit4 <-plot(barplot(Go_results4, showCategory = 15))+ggtitle("Gene Ontology  Enrichment in High vs Low 1/f Neurons of ", ct) #show top 15
+  # Save volcano plot as PDF
+  pdf_filename <- paste0(ct, "_GO_ALL_lowerT.pdf")
+  ggsave(
+    filename = pdf_filename,
+    plot = fit4,
+    device = "pdf",
+    width = 10, height = 20
+  )
+    fit5 <-plot(dotplot(Go_results4, showCategory = 15))+ggtitle("Gene Ontology  Enrichment in High vs Low 1/f Neurons of ", ct) #show top 15
+  # Save volcano plot as PDF
+  pdf_filename <- paste0(ct, "_GO_ALL_lowerT_DotPlot.pdf")
+  ggsave(
+    filename = pdf_filename,
+    plot = fit5,
+    device = "pdf",
+    width = 10, height = 20
+  )
+}
+```
+
