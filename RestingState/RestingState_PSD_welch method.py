@@ -1,5 +1,5 @@
 import numpy as np
-import mne
+import mne 
 from scipy.signal import welch, detrend
 import os
 
