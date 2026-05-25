@@ -1,0 +1,496 @@
+---
+title: "Comparative DGE Analysis: Epilepsy vs Normal vs Tumor"
+output: html_notebook
+---
+
+This script performs differential gene expression analysis on normal and tumor neurons, then compares results with epilepsy to identify shared and unique DEGs.
+
+## 1. Load Libraries
+
+```{r}
+library("clusterProfiler")
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+library(EnhancedVolcano)
+library(writexl)
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(VennDiagram)
+library(gridExtra)
+```
+
+## 2. Load Epilepsy DGE Results
+
+```{r}
+# Load the epilepsy DGE results from previous analysis
+epilepsy_dge <- read.csv("D:/AbrahamDada/oneoverf/oneoverf_R1_10326/csv/epilepsy_DGE_oneoverf.csv")
+
+cat("Epilepsy DGE results loaded\n")
+cat("Total genes:", nrow(epilepsy_dge), "\n")
+
+# Define significant DEGs (threshold: |log2FC| > 0.25 & p_adj < 0.05)
+epilepsy_degs_high <- epilepsy_dge$Gene[epilepsy_dge$avg_log2FC < -0.25 & epilepsy_dge$p_val_adj < 0.05]
+epilepsy_degs_low <- epilepsy_dge$Gene[epilepsy_dge$avg_log2FC > 0.25 & epilepsy_dge$p_val_adj < 0.05]
+
+cat("Epilepsy DEGs (steep 1/f):", length(epilepsy_degs_high), "\n")
+cat("Epilepsy DEGs (flat 1/f):", length(epilepsy_degs_low), "\n")
+```
+
+## 3. Load Main Neuron Object and Prepare for DGE
+
+```{r}
+# Load the prepared main neuron object
+main_neuron_obj <- readRDS("D:/Youssef Sibih/Seurat_Objects/mainobj_metadata_corrected_neurons_only.rds")
+
+cat("Main neuron object loaded\n")
+cat("Total cells before filtering:", ncol(main_neuron_obj), "\n")
+
+# Check class_name distribution
+cat("\nclass_name distribution:\n")
+print(table(main_neuron_obj$class_name, useNA = "ifany"))
+
+# Filter to only neuronal populations (exclude "Non-neuronal and Non-neural")
+cat("\nFiltering to neuronal populations only...\n")
+main_neuron_obj <- subset(main_neuron_obj, 
+                          subset = class_name %in% c("Neuronal: Glutamatergic", "Neuronal: GABAergic"))
+
+cat("Filtered to neuronal populations\n")
+cat("Total neurons after filtering:", ncol(main_neuron_obj), "\n")
+cat("Cortex types:", paste(unique(main_neuron_obj$cortex_type), collapse = ", "), "\n\n")
+
+# Display distribution
+cat("Distribution by cortex_type:\n")
+print(table(main_neuron_obj$cortex_type, useNA = "ifany"))
+
+cat("\nDistribution by one_over_f_status:\n")
+print(table(main_neuron_obj$one_over_f_status, useNA = "ifany"))
+
+cat("\nCross-tabulation:\n")
+print(table(main_neuron_obj$cortex_type, main_neuron_obj$one_over_f_status, useNA = "ifany"))
+
+# IMPORTANT: Prepare the FULL filtered object for SCT-based FindMarkers BEFORE further subsetting
+cat("\nPreparing full filtered object for SCT-based DGE...\n")
+main_neuron_obj <- PrepSCTFindMarkers(main_neuron_obj)
+cat("PrepSCTFindMarkers complete on full filtered object\n")
+```
+
+## 4. DGE Analysis - Normal Neurons
+
+```{r}
+# Subset to Normal Cortex neurons (AFTER PrepSCTFindMarkers)
+normal_obj <- subset(main_neuron_obj, subset = cortex_type == "Normal Cortex")
+
+cat("Normal neurons subset created\n")
+cat("Total cells:", ncol(normal_obj), "\n")
+cat("one_over_f_status distribution:\n")
+print(table(normal_obj$one_over_f_status))
+
+# Run DGE (object already prepared, use recorrect_umi=FALSE)
+Idents(normal_obj) <- "one_over_f_status"
+
+normal_dge <- FindMarkers(normal_obj, 
+                          ident.1 = "low1overf", 
+                          ident.2 = "high1overf",
+                          verbose = FALSE,
+                          recorrect_umi = FALSE)
+
+# Add gene names as column
+normal_result <- cbind(Gene = rownames(normal_dge), normal_dge)
+
+# Save CSV
+csv_dir <- "D:/AbrahamDada/oneoverf/oneoverf_R1_10326/csv"
+write.csv(normal_result, file.path(csv_dir, "normal_DGE_oneoverf.csv"), row.names = FALSE)
+
+cat("Normal DGE complete. Saved to:", file.path(csv_dir, "normal_DGE_oneoverf.csv"), "\n")
+
+# Define significant DEGs
+normal_degs_high <- normal_result$Gene[normal_result$avg_log2FC < -0.25 & normal_result$p_val_adj < 0.05]
+normal_degs_low <- normal_result$Gene[normal_result$avg_log2FC > 0.25 & normal_result$p_val_adj < 0.05]
+
+cat("Normal DEGs (steep 1/f):", length(normal_degs_high), "\n")
+cat("Normal DEGs (flat 1/f):", length(normal_degs_low), "\n")
+```
+
+## 5. DGE Analysis - All Tumor Neurons
+
+```{r}
+# Subset to all tumor neurons (AFTER PrepSCTFindMarkers)
+tumor_obj <- subset(main_neuron_obj, subset = cortex_type %in% c("oligodendroglioma", "astrocytoma", "glioblastoma"))
+
+cat("Tumor neurons subset created\n")
+cat("Total cells:", ncol(tumor_obj), "\n")
+cat("Cortex types:", paste(unique(tumor_obj$cortex_type), collapse = ", "), "\n")
+
+# Run DGE on all tumor cells (object already prepared, use recorrect_umi=FALSE)
+Idents(tumor_obj) <- "one_over_f_status"
+
+tumor_all_dge <- FindMarkers(tumor_obj, 
+                             ident.1 = "low1overf", 
+                             ident.2 = "high1overf",
+                             verbose = FALSE,
+                             recorrect_umi = FALSE)
+
+# Add gene names as column
+tumor_all_result <- cbind(Gene = rownames(tumor_all_dge), tumor_all_dge)
+
+# Save CSV
+write.csv(tumor_all_result, file.path(csv_dir, "tumor_all_DGE_oneoverf.csv"), row.names = FALSE)
+
+cat("Tumor (all) DGE complete. Saved to:", file.path(csv_dir, "tumor_all_DGE_oneoverf.csv"), "\n")
+
+# Define significant DEGs
+tumor_all_degs_high <- tumor_all_result$Gene[tumor_all_result$avg_log2FC < -0.25 & tumor_all_result$p_val_adj < 0.05]
+tumor_all_degs_low <- tumor_all_result$Gene[tumor_all_result$avg_log2FC > 0.25 & tumor_all_result$p_val_adj < 0.05]
+
+cat("Tumor (all) DEGs (steep 1/f):", length(tumor_all_degs_high), "\n")
+cat("Tumor (all) DEGs (flat 1/f):", length(tumor_all_degs_low), "\n")
+```
+
+## 6. DGE Analysis - Tumor Subtypes
+
+```{r}
+# Get unique cortex types
+types <- c("oligodendroglioma", "astrocytoma", "glioblastoma")
+
+# Initialize list to store results
+subtype_results <- list()
+subtype_degs_high <- list()
+subtype_degs_low <- list()
+
+for(ct in types) {
+  cat("\n=== Processing:", ct, "===\n")
+  
+  # Subset to current cortex_type
+  sub_obj <- subset(tumor_obj, subset = cortex_type == ct)
+  cat("Cells:", ncol(sub_obj), "\n")
+  
+  # Perform differential expression analysis
+  result <- FindMarkers(
+    sub_obj, 
+    ident.1 = "low1overf",
+    ident.2 = "high1overf",
+    group.by = "one_over_f_status",
+    logfc.threshold = 0,
+    min.pct = 0,
+    verbose = FALSE,
+    recorrect_umi = FALSE
+  )
+  
+  # Genes are stored as rownames, moving them to their own column
+  result <- cbind(Gene = rownames(result), result)
+  
+  # Save as CSV
+  csv_filename <- paste0("tumor_", ct, "_DGE_oneoverf.csv")
+  write.csv(result, file.path(csv_dir, csv_filename), row.names = FALSE)
+  cat("Saved:", csv_filename, "\n")
+  
+  # Store results
+  subtype_results[[ct]] <- result
+  
+  # Define significant DEGs
+  subtype_degs_high[[ct]] <- result$Gene[result$avg_log2FC < -0.25 & result$p_val_adj < 0.05]
+  subtype_degs_low[[ct]] <- result$Gene[result$avg_log2FC > 0.25 & result$p_val_adj < 0.05]
+  
+  cat("DEGs (steep 1/f):", length(subtype_degs_high[[ct]]), "\n")
+  cat("DEGs (flat 1/f):", length(subtype_degs_low[[ct]]), "\n")
+}
+```
+
+## 6. Overlap Analysis - Bar Plots
+
+```{r}
+# Calculate overlaps
+calc_overlap_pct <- function(set1, set2) {
+  overlap <- length(intersect(set1, set2))
+  pct <- (overlap / length(set1)) * 100
+  return(list(overlap = overlap, pct = pct, total = length(set1)))
+}
+
+# Calculate overlaps for steep 1/f
+overlap_tumor_high <- calc_overlap_pct(epilepsy_degs_high, tumor_all_degs_high)
+overlap_normal_high <- calc_overlap_pct(epilepsy_degs_high, normal_degs_high)
+
+# Calculate overlaps for flat 1/f
+overlap_tumor_low <- calc_overlap_pct(epilepsy_degs_low, tumor_all_degs_low)
+overlap_normal_low <- calc_overlap_pct(epilepsy_degs_low, normal_degs_low)
+
+# Create data frame for plotting
+overlap_df <- data.frame(
+  Comparison = factor(c("Epilepsy vs Tumor\n(Steep 1/f)", 
+                       "Epilepsy vs Tumor\n(Flat 1/f)",
+                       "Epilepsy vs Normal\n(Steep 1/f)", 
+                       "Epilepsy vs Normal\n(Flat 1/f)"),
+                     levels = c("Epilepsy vs Tumor\n(Steep 1/f)", 
+                               "Epilepsy vs Tumor\n(Flat 1/f)",
+                               "Epilepsy vs Normal\n(Steep 1/f)", 
+                               "Epilepsy vs Normal\n(Flat 1/f)")),
+  Overlap_Pct = c(overlap_tumor_high$pct, overlap_tumor_low$pct,
+                  overlap_normal_high$pct, overlap_normal_low$pct),
+  Overlap_N = c(overlap_tumor_high$overlap, overlap_tumor_low$overlap,
+                overlap_normal_high$overlap, overlap_normal_low$overlap),
+  Total_N = c(overlap_tumor_high$total, overlap_tumor_low$total,
+              overlap_normal_high$total, overlap_normal_low$total)
+)
+
+# Create bar plot with better aesthetics
+plot_dir <- "D:/AbrahamDada/oneoverf/oneoverf_R1_10326/plots"
+
+# Version 1: Colored bars
+overlap_colors <- c("#E377C2", "#FF7F00", "#4DAF4A", "#8C564B")
+
+p_overlap_colored <- ggplot(overlap_df, aes(x = Comparison, y = Overlap_Pct, fill = Comparison)) +
+  geom_bar(stat = "identity", width = 0.75, colour = "black", size = 0.5) +
+  geom_text(aes(label = paste0(round(Overlap_Pct, 1), "%\n(", Overlap_N, "/", Total_N, ")")),
+            vjust = -0.3, size = 3.5, fontface = "bold") +
+  scale_fill_manual(values = overlap_colors, guide = "none") +
+  labs(x = NULL, y = "% Overlap of DEGs") +
+  theme_classic(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+        axis.title.y = element_text(face = "bold", size = 12),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  ylim(0, max(overlap_df$Overlap_Pct) * 1.15)
+
+ggsave(filename = "DGE_overlap_epilepsy_comparison_colored.pdf", 
+       plot = p_overlap_colored, 
+       path = plot_dir, 
+       width = 5.2, height = 7.56, 
+       device = "pdf", dpi = 600)
+
+p_overlap_colored
+
+# Version 2: All dark blue bars
+p_overlap_blue <- ggplot(overlap_df, aes(x = Comparison, y = Overlap_Pct)) +
+  geom_bar(stat = "identity", width = 0.75, fill = "#1f77b4", colour = "black", size = 0.5) +
+  geom_text(aes(label = paste0(round(Overlap_Pct, 1), "%\n(", Overlap_N, "/", Total_N, ")")),
+            vjust = -0.3, size = 3.5, fontface = "bold") +
+  labs(x = NULL, y = "% Overlap of DEGs") +
+  theme_classic(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+        axis.title.y = element_text(face = "bold", size = 12),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  ylim(0, max(overlap_df$Overlap_Pct) * 1.15)
+
+ggsave(filename = "DGE_overlap_epilepsy_comparison_blue.pdf", 
+       plot = p_overlap_blue, 
+       path = plot_dir, 
+       width = 5.2, height = 7.56, 
+       device = "pdf", dpi = 600)
+
+p_overlap_blue
+```
+
+## 7. GO Enrichment - Tumor-Specific Genes (Not in Epilepsy)
+
+```{r}
+cat("\n=== GO Enrichment: Tumor-Specific Genes ===\n")
+
+# Function to run GO enrichment for all ontologies
+run_go_all_ontologies <- function(genes, title_prefix, file_prefix) {
+  if (length(genes) < 10) {
+    cat("  Not enough genes (", length(genes), ") for GO enrichment\n")
+    return(NULL)
+  }
+  
+  ontologies <- c("MF", "CC", "BP", "ALL")
+  ont_names <- c("MF" = "Molecular Function", "CC" = "Cellular Component", 
+                 "BP" = "Biological Process", "ALL" = "All Ontologies")
+  
+  for (ont in ontologies) {
+    Go_result <- enrichGO(gene = genes, 
+                         OrgDb = "org.Hs.eg.db", 
+                         keyType = "SYMBOL", 
+                         ont = ont, 
+                         pvalueCutoff = 0.05, 
+                         qvalueCutoff = 0.05)
+    
+    if (nrow(Go_result@result) > 0) {
+      p <- dotplot(Go_result, showCategory = 10, orderBy = "GeneRatio") +
+        ggtitle(paste0(title_prefix, " - ", ont_names[ont]))
+      
+      ggsave(filename = paste0(file_prefix, "_", ont, ".pdf"), 
+             plot = p, path = plot_dir, 
+             width = 10, height = 8, device = "pdf", dpi = 600)
+      
+      cat("  Saved:", paste0(file_prefix, "_", ont, ".pdf"), "\n")
+    }
+  }
+}
+
+# Genes unique to tumor (steep 1/f)
+tumor_unique_high <- setdiff(tumor_all_degs_high, epilepsy_degs_high)
+cat("Tumor-specific (steep 1/f):", length(tumor_unique_high), "genes\n")
+run_go_all_ontologies(tumor_unique_high, 
+                      "GO: Tumor-Specific (Steep 1/f)", 
+                      "GO_tumor_unique_high1overf")
+
+# Genes unique to tumor (flat 1/f)
+tumor_unique_low <- setdiff(tumor_all_degs_low, epilepsy_degs_low)
+cat("\nTumor-specific (flat 1/f):", length(tumor_unique_low), "genes\n")
+run_go_all_ontologies(tumor_unique_low, 
+                      "GO: Tumor-Specific (Flat 1/f)", 
+                      "GO_tumor_unique_low1overf")
+```
+
+## 8. GO Enrichment - Epilepsy-Specific Genes (Not in Tumor)
+
+```{r}
+cat("\n=== GO Enrichment: Epilepsy-Specific Genes ===\n")
+
+# Genes unique to epilepsy (steep 1/f)
+epilepsy_unique_high <- setdiff(epilepsy_degs_high, tumor_all_degs_high)
+cat("Epilepsy-specific (steep 1/f):", length(epilepsy_unique_high), "genes\n")
+run_go_all_ontologies(epilepsy_unique_high, 
+                      "GO: Epilepsy-Specific (Steep 1/f)", 
+                      "GO_epilepsy_unique_high1overf")
+
+# Genes unique to epilepsy (flat 1/f)
+epilepsy_unique_low <- setdiff(epilepsy_degs_low, tumor_all_degs_low)
+cat("\nEpilepsy-specific (flat 1/f):", length(epilepsy_unique_low), "genes\n")
+run_go_all_ontologies(epilepsy_unique_low, 
+                      "GO: Epilepsy-Specific (Flat 1/f)", 
+                      "GO_epilepsy_unique_low1overf")
+```
+
+## 9. Subtype-Specific Comparisons
+
+```{r}
+cat("\n=== Subtype-Specific Comparisons ===\n")
+
+for(ct in names(subtype_degs_high)) {
+  cat("\n", ct, ":\n")
+  
+  # Calculate overlaps
+  overlap_high <- calc_overlap_pct(epilepsy_degs_high, subtype_degs_high[[ct]])
+  overlap_low <- calc_overlap_pct(epilepsy_degs_low, subtype_degs_low[[ct]])
+  
+  cat("  Overlap (steep 1/f):", overlap_high$pct, "% (", overlap_high$overlap, "/", overlap_high$total, ")\n")
+  cat("  Overlap (flat 1/f):", overlap_low$pct, "% (", overlap_low$overlap, "/", overlap_low$total, ")\n")
+  
+  # GO enrichment for subtype-specific genes (not in epilepsy)
+  # Steep 1/f
+  subtype_unique_high <- setdiff(subtype_degs_high[[ct]], epilepsy_degs_high)
+  cat("  ", ct, "-specific (steep 1/f):", length(subtype_unique_high), "genes\n")
+  run_go_all_ontologies(subtype_unique_high, 
+                        paste0("GO: ", ct, "-Specific (Steep 1/f)"), 
+                        paste0("GO_", ct, "_unique_high1overf"))
+  
+  # Flat 1/f
+  subtype_unique_low <- setdiff(subtype_degs_low[[ct]], epilepsy_degs_low)
+  cat("  ", ct, "-specific (flat 1/f):", length(subtype_unique_low), "genes\n")
+  run_go_all_ontologies(subtype_unique_low, 
+                        paste0("GO: ", ct, "-Specific (Flat 1/f)"), 
+                        paste0("GO_", ct, "_unique_low1overf"))
+}
+```
+
+## 10. Export Gene Lists as CSVs
+
+```{r}
+cat("\n=== Exporting Gene Lists ===\n")
+
+# HIGH 1/F GENE LISTS
+# 1. Shared between epilepsy and all tumor
+shared_epi_tumor_high <- intersect(epilepsy_degs_high, tumor_all_degs_high)
+write.csv(data.frame(Gene = shared_epi_tumor_high), 
+          file.path(csv_dir, "shared_epilepsy_tumor_high1overf.csv"), 
+          row.names = FALSE)
+cat("Saved: shared_epilepsy_tumor_high1overf.csv (", length(shared_epi_tumor_high), " genes)\n")
+
+# 2. Unique to epilepsy
+epilepsy_unique_high <- setdiff(epilepsy_degs_high, tumor_all_degs_high)
+write.csv(data.frame(Gene = epilepsy_unique_high), 
+          file.path(csv_dir, "unique_epilepsy_high1overf.csv"), 
+          row.names = FALSE)
+cat("Saved: unique_epilepsy_high1overf.csv (", length(epilepsy_unique_high), " genes)\n")
+
+# 3. Unique to all tumor
+tumor_unique_high <- setdiff(tumor_all_degs_high, epilepsy_degs_high)
+write.csv(data.frame(Gene = tumor_unique_high), 
+          file.path(csv_dir, "unique_tumor_high1overf.csv"), 
+          row.names = FALSE)
+cat("Saved: unique_tumor_high1overf.csv (", length(tumor_unique_high), " genes)\n")
+
+# 4-6. Unique to each tumor subtype
+for (ct in c("oligodendroglioma", "astrocytoma", "glioblastoma")) {
+  subtype_unique <- setdiff(subtype_degs_high[[ct]], epilepsy_degs_high)
+  write.csv(data.frame(Gene = subtype_unique), 
+            file.path(csv_dir, paste0("unique_", ct, "_high1overf.csv")), 
+            row.names = FALSE)
+  cat("Saved: unique_", ct, "_high1overf.csv (", length(subtype_unique), " genes)\n")
+}
+
+cat("\n")
+
+# LOW 1/F GENE LISTS
+# 1. Shared between epilepsy and all tumor
+shared_epi_tumor_low <- intersect(epilepsy_degs_low, tumor_all_degs_low)
+write.csv(data.frame(Gene = shared_epi_tumor_low), 
+          file.path(csv_dir, "shared_epilepsy_tumor_low1overf.csv"), 
+          row.names = FALSE)
+cat("Saved: shared_epilepsy_tumor_low1overf.csv (", length(shared_epi_tumor_low), " genes)\n")
+
+# 2. Unique to epilepsy
+epilepsy_unique_low <- setdiff(epilepsy_degs_low, tumor_all_degs_low)
+write.csv(data.frame(Gene = epilepsy_unique_low), 
+          file.path(csv_dir, "unique_epilepsy_low1overf.csv"), 
+          row.names = FALSE)
+cat("Saved: unique_epilepsy_low1overf.csv (", length(epilepsy_unique_low), " genes)\n")
+
+# 3. Unique to all tumor
+tumor_unique_low <- setdiff(tumor_all_degs_low, epilepsy_degs_low)
+write.csv(data.frame(Gene = tumor_unique_low), 
+          file.path(csv_dir, "unique_tumor_low1overf.csv"), 
+          row.names = FALSE)
+cat("Saved: unique_tumor_low1overf.csv (", length(tumor_unique_low), " genes)\n")
+
+# 4-6. Unique to each tumor subtype
+for (ct in c("oligodendroglioma", "astrocytoma", "glioblastoma")) {
+  subtype_unique <- setdiff(subtype_degs_low[[ct]], epilepsy_degs_low)
+  write.csv(data.frame(Gene = subtype_unique), 
+            file.path(csv_dir, paste0("unique_", ct, "_low1overf.csv")), 
+            row.names = FALSE)
+  cat("Saved: unique_", ct, "_low1overf.csv (", length(subtype_unique), " genes)\n")
+}
+
+cat("\n=== Gene List Export Complete ===\n")
+cat("Total CSV files created: 12 (6 for steep 1/f, 6 for flat 1/f)\n")
+```
+
+## 11. Summary
+
+```{r}
+cat("\n=== Comparative DGE Analysis Summary ===\n\n")
+
+cat("Epilepsy DEGs:\n")
+cat("  Steep 1/f:", length(epilepsy_degs_high), "\n")
+  cat("  Flat 1/f:", length(epilepsy_degs_low), "\n\n")
+
+if (exists("normal_degs_high")) {
+  cat("Normal DEGs:\n")
+  cat("  Steep 1/f:", length(normal_degs_high), "\n")
+  cat("  Flat 1/f:", length(normal_degs_low), "\n\n")
+}
+
+cat("Tumor (all) DEGs:\n")
+cat("  Steep 1/f:", length(tumor_all_degs_high), "\n")
+cat("  Flat 1/f:", length(tumor_all_degs_low), "\n\n")
+
+cat("Tumor Subtypes:\n")
+for(ct in names(subtype_degs_high)) {
+  cat("  ", ct, ":\n")
+  cat("    Steep 1/f:", length(subtype_degs_high[[ct]]), "\n")
+  cat("    Flat 1/f:", length(subtype_degs_low[[ct]]), "\n")
+}
+
+cat("\n=== Outputs Created ===\n")
+cat("CSVs saved to:", csv_dir, "\n")
+cat("  - DGE results for normal, tumor (all), and each subtype\n")
+cat("  - Gene lists: shared and unique for steep/flat 1/f (12 CSV files)\n")
+cat("\nPlots saved to:", plot_dir, "\n")
+cat("  - DGE_overlap_epilepsy_comparison.pdf\n")
+cat("  - GO enrichment plots (MF, CC, BP, ALL) for unique gene sets\n")
+```
+

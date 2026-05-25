@@ -1,0 +1,344 @@
+---
+title: "Epilepsy Differential Gene Expression Analysis"
+output: html_notebook
+---
+
+This script performs differential gene expression analysis comparing steep vs flat 1/f in epilepsy neurons.
+
+## 1. Load Libraries
+
+```{r}
+library("clusterProfiler")
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+library(EnhancedVolcano)
+library(writexl)
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+```
+
+## 2. Load Neuron-Only Object
+
+```{r}
+# Load the neuron-only object with MapMyCells annotations and module scores
+# This object was created in script 2 and already filtered to neuronal populations only
+neuron_obj_path <- "D:/Youssef Sibih/Seurat_Objects/R1_123125/epilepsy_neurons_sct_MapCells.rds"
+neuron_obj_cleaned <- readRDS(neuron_obj_path)
+
+cat("Neuron object loaded successfully!\n")
+cat("Total neurons:", ncol(neuron_obj_cleaned), "\n")
+
+# Verify neuronal populations only
+if ("class_name" %in% colnames(neuron_obj_cleaned@meta.data)) {
+  cat("\nclass_name distribution:\n")
+  print(table(neuron_obj_cleaned$class_name, useNA = "ifany"))
+  
+  # Filter to neuronal populations if any non-neuronal cells exist
+  if (any(!neuron_obj_cleaned$class_name %in% c("Neuronal: Glutamatergic", "Neuronal: GABAergic"), na.rm = TRUE)) {
+    cat("Filtering to neuronal populations only...\n")
+    neuron_obj_cleaned <- subset(neuron_obj_cleaned, 
+                                 subset = class_name %in% c("Neuronal: Glutamatergic", "Neuronal: GABAergic"))
+    cat("After filtering:", ncol(neuron_obj_cleaned), "neurons\n")
+  } else {
+    cat("✓ Object already contains only neuronal populations\n")
+  }
+}
+
+cat("\none_over_f_status groups:\n")
+print(table(neuron_obj_cleaned@meta.data$one_over_f_status))
+```
+
+## 3. Differential Gene Expression Analysis
+
+```{r}
+# Prepare object for SCT-based differential expression
+neuron_obj_cleaned <- PrepSCTFindMarkers(neuron_obj_cleaned)
+
+# Set identities to one_over_f_status
+Idents(neuron_obj_cleaned) <- "one_over_f_status"
+
+# Run FindMarkers (low1overf vs high1overf)
+one_over_F_diff <- FindMarkers(neuron_obj_cleaned, 
+                               ident.1 = "low1overf", 
+                               ident.2 = "high1overf", 
+                               verbose = FALSE)
+
+cat("Differential expression analysis complete\n")
+cat("Total differentially expressed genes:", nrow(one_over_F_diff), "\n")
+head(one_over_F_diff, n = 15)
+
+# Genes are stored as rownames, moving them to their own column
+result <- cbind(Gene = rownames(one_over_F_diff), one_over_F_diff)
+
+# Save results as CSV
+csv_dir <- "D:/AbrahamDada/oneoverf/oneoverf_R1_10326/csv"
+if (!dir.exists(csv_dir)) {
+  dir.create(csv_dir, recursive = TRUE)
+}
+csv_path <- file.path(csv_dir, "epilepsy_DGE_oneoverf.csv")
+write.csv(result, csv_path, row.names = FALSE)
+cat("Results saved to:", csv_path, "\n")
+```
+
+## 4. Volcano Plot
+
+```{r}
+# Define excitatory and inhibitory gene lists for labeling
+excitatory_list <- list(c("SLC17A6", "SLC17A7", "SLC17A8", "GRIA1", "GRIA2", "GRIA3", "GRIA4", 
+                          "GRIN1", "GRIN2A", "GRIN2B", "GRIN2C", "GRIN2D", "GRIN3A", "GRIN3B", 
+                          "GRM1", "GRM2", "GRM3", "GRM4", "GRM5", "GRM6", "GRM7", "GRM8", 
+                          "TBR1", "FEZF2", "NEUROD1", "CTIP2", "SATB2", "CAMK2A", "CAMK2B", 
+                          "NRGN", "SYT1", "PSD95", "DLG4", "SHANK1", "SHANK2", "SHANK3", 
+                          "HOMER1", "HOMER2", "HOMER3", "VAMP1", "VAMP2"))
+
+inhibitory_list <- list(c("GAD1", "GAD2", "SLC32A1", "SLC6A1", "GABRA1", "GABRA2", "GABRA3", 
+                          "GABRA4", "GABRA5", "GABRA6", "GABRB1", "GABRB2", "GABRB3", 
+                          "GABRG1", "GABRG2", "GABRG3", "GABBR1", "GABBR2", "DLX1", "DLX2", 
+                          "DLX5", "DLX6", "ARX", "LHX6", "SST", "PVALB", "CALB1", "CALB2", 
+                          "VIP", "CR", "NPY", "GPHN", "NKCC1", "SLC12A2", "KCC2", "SLC12A5"))
+
+combined_list <- unique(c(excitatory_list[[1]], inhibitory_list[[1]]))
+
+# Create a vector for point color
+keyvals <- rep("grey", nrow(result))
+keyvals[result$avg_log2FC > 0.25] <- "#18bdc2"
+keyvals[result$avg_log2FC < -0.25] <- "#f3766e"
+
+names(keyvals) <- rep("NS", length(keyvals))
+names(keyvals)[keyvals == "#18bdc2"] <- "FoldChange > 0.25"
+names(keyvals)[keyvals == "#f3766e"] <- "FoldChange < -0.25"
+
+# Identify the genes that pass fold-change threshold
+threshold_genes <- rownames(result)[abs(result$avg_log2FC) > 0.25]
+
+# Get only the genes that are present in both result and combined list
+selected_genes <- intersect(rownames(result), combined_list)
+selected_threshold_genes <- intersect(selected_genes, threshold_genes)
+
+# Volcano plot with labels
+volcanoPlotWithLabels <- EnhancedVolcano(
+  result,
+  lab = rownames(result),
+  x = "avg_log2FC",
+  y = "p_val_adj",
+  selectLab = selected_threshold_genes,
+  colCustom = keyvals,
+  pCutoff = NA,
+  FCcutoff = NA,
+  cutoffLineType = "blank",
+  max.overlaps = Inf,
+  drawConnectors = TRUE,
+  title = "Volcano Plot: Epilepsy (Flat vs Steep 1/f)"
+)
+
+p1 <- volcanoPlotWithLabels + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()
+)
+
+# Save plot
+plot_dir <- "D:/AbrahamDada/oneoverf/oneoverf_R1_10326/plots"
+if (!dir.exists(plot_dir)) {
+  dir.create(plot_dir, recursive = TRUE)
+}
+
+ggsave(filename = "epilepsy_volcano_labeled.pdf", 
+       plot = p1, 
+       path = plot_dir, 
+       width = 10, height = 8, 
+       device = "pdf", dpi = 600)
+
+p1
+
+# Volcano plot without labels
+volcanoPlotNoLabels <- EnhancedVolcano(
+  result,
+  lab = NA,
+  x = "avg_log2FC",
+  y = "p_val_adj",
+  colCustom = keyvals,
+  pCutoff = NA,
+  FCcutoff = NA,
+  cutoffLineType = "blank",
+  title = "Volcano Plot: Epilepsy (No Labels)"
+)
+
+p2 <- volcanoPlotNoLabels + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()
+)
+
+ggsave(filename = "epilepsy_volcano_nolabel.pdf", 
+       plot = p2, 
+       path = plot_dir, 
+       width = 10, height = 8, 
+       device = "pdf", dpi = 600)
+
+p2
+```
+
+## 5. GO Enrichment - Flat 1/f (Higher in low1overf)
+
+```{r}
+# Filter genes with positive log2FC (higher in low1overf) and significant p-value
+genes_to_test_low <- rownames(result[result$avg_log2FC > 0.25 & result$p_val_adj < 0.05, ])
+
+cat("Genes higher in flat 1/f:", length(genes_to_test_low), "\n")
+
+if (length(genes_to_test_low) > 0) {
+  # Perform GO Enrichment for different ontology categories
+  Go_results1 <- enrichGO(gene = genes_to_test_low, 
+                          OrgDb = "org.Hs.eg.db", 
+                          keyType = "SYMBOL", 
+                          ont = "MF", 
+                          pvalueCutoff = 0.01, 
+                          qvalueCutoff = 0.05)
+  
+  Go_results2 <- enrichGO(gene = genes_to_test_low, 
+                          OrgDb = "org.Hs.eg.db", 
+                          keyType = "SYMBOL", 
+                          ont = "CC", 
+                          pvalueCutoff = 0.01, 
+                          qvalueCutoff = 0.05)
+  
+  Go_results3 <- enrichGO(gene = genes_to_test_low, 
+                          OrgDb = "org.Hs.eg.db", 
+                          keyType = "SYMBOL", 
+                          ont = "BP", 
+                          pvalueCutoff = 0.01, 
+                          qvalueCutoff = 0.05)
+  
+  Go_results4 <- enrichGO(gene = genes_to_test_low, 
+                          OrgDb = "org.Hs.eg.db", 
+                          keyType = "SYMBOL", 
+                          ont = "ALL", 
+                          pvalueCutoff = 0.05, 
+                          qvalueCutoff = 0.05)
+  
+  # Function to generate and save dotplots
+  save_dotplot <- function(go_results, filename) {
+    fit <- dotplot(go_results, showCategory = 8, orderBy = "GeneRatio") +
+      aes(shape = I(16), color = I("#18bdc2")) +
+      theme(legend.position = "right") +
+      guides(fill = "none")
+    
+    ggsave(
+      filename = filename,
+      plot = fit,
+      path = plot_dir,
+      device = "pdf",
+      width = 8,
+      height = 14,
+      dpi = 600
+    )
+  }
+  
+  # Save dot plots for each GO result
+  save_dotplot(Go_results1, "epilepsy_GO_MF_lower1overf_dotplot.pdf")
+  save_dotplot(Go_results2, "epilepsy_GO_CC_lower1overf_dotplot.pdf")
+  save_dotplot(Go_results3, "epilepsy_GO_BP_lower1overf_dotplot.pdf")
+  save_dotplot(Go_results4, "epilepsy_GO_ALL_lower1overf_dotplot.pdf")
+  
+  cat("GO enrichment plots for flat 1/f saved\n")
+} else {
+  cat("No significant genes found for flat 1/f GO enrichment\n")
+}
+```
+
+## 6. GO Enrichment - Steep 1/f (Higher in high1overf)
+
+```{r}
+# Filter genes with negative log2FC (higher in high1overf) and significant p-value
+genes_to_test_high <- rownames(result[result$avg_log2FC < -0.25 & result$p_val_adj < 0.05, ])
+
+cat("Genes higher in steep 1/f:", length(genes_to_test_high), "\n")
+
+if (length(genes_to_test_high) > 0) {
+  # Perform GO Enrichment for different ontology categories
+  Go_results5 <- enrichGO(gene = genes_to_test_high, 
+                          OrgDb = "org.Hs.eg.db", 
+                          keyType = "SYMBOL", 
+                          ont = "MF", 
+                          pvalueCutoff = 0.01, 
+                          qvalueCutoff = 0.05)
+  
+  Go_results6 <- enrichGO(gene = genes_to_test_high, 
+                          OrgDb = "org.Hs.eg.db", 
+                          keyType = "SYMBOL", 
+                          ont = "CC", 
+                          pvalueCutoff = 0.01, 
+                          qvalueCutoff = 0.05)
+  
+  Go_results7 <- enrichGO(gene = genes_to_test_high, 
+                          OrgDb = "org.Hs.eg.db", 
+                          keyType = "SYMBOL", 
+                          ont = "BP", 
+                          pvalueCutoff = 0.01, 
+                          qvalueCutoff = 0.05)
+  
+  Go_results8 <- enrichGO(gene = genes_to_test_high, 
+                          OrgDb = "org.Hs.eg.db", 
+                          keyType = "SYMBOL", 
+                          ont = "ALL", 
+                          pvalueCutoff = 0.05, 
+                          qvalueCutoff = 0.05)
+  
+  # Function to generate and save dotplots
+  save_dotplot_2 <- function(go_results, filename) {
+    fit <- dotplot(go_results, showCategory = 8, orderBy = "GeneRatio") +
+      aes(shape = I(16), color = I("#f3766e")) +
+      theme(legend.position = "right") +
+      guides(fill = "none")
+    
+    ggsave(
+      filename = filename,
+      plot = fit,
+      path = plot_dir,
+      device = "pdf",
+      width = 8,
+      height = 14,
+      dpi = 600
+    )
+  }
+  
+  # Save dot plots for each GO result
+  save_dotplot_2(Go_results5, "epilepsy_GO_MF_high1overf_dotplot.pdf")
+  save_dotplot_2(Go_results6, "epilepsy_GO_CC_high1overf_dotplot.pdf")
+  save_dotplot_2(Go_results7, "epilepsy_GO_BP_high1overf_dotplot.pdf")
+  save_dotplot_2(Go_results8, "epilepsy_GO_ALL_high1overf_dotplot.pdf")
+  
+  cat("GO enrichment plots for steep 1/f saved\n")
+} else {
+  cat("No significant genes found for steep 1/f GO enrichment\n")
+}
+```
+
+## 7. Summary
+
+```{r}
+cat("=== Differential Expression Summary ===\n")
+cat("Total genes tested:", nrow(result), "\n")
+cat("Significant genes (p_val_adj < 0.05):", sum(result$p_val_adj < 0.05, na.rm = TRUE), "\n")
+cat("Genes with |log2FC| > 0.25:", sum(abs(result$avg_log2FC) > 0.25, na.rm = TRUE), "\n")
+cat("Significant AND |log2FC| > 0.25:", sum(result$p_val_adj < 0.05 & abs(result$avg_log2FC) > 0.25, na.rm = TRUE), "\n\n")
+
+cat("Outputs created:\n")
+cat("1. CSV:", csv_path, "\n")
+cat("2. Plots saved to:", plot_dir, "\n")
+cat("   - epilepsy_volcano_labeled.pdf\n")
+cat("   - epilepsy_volcano_nolabel.pdf\n")
+if (length(genes_to_test_low) > 0) {
+  cat("   - epilepsy_GO_MF_lower1overf_dotplot.pdf\n")
+  cat("   - epilepsy_GO_CC_lower1overf_dotplot.pdf\n")
+  cat("   - epilepsy_GO_BP_lower1overf_dotplot.pdf\n")
+  cat("   - epilepsy_GO_ALL_lower1overf_dotplot.pdf\n")
+}
+if (length(genes_to_test_high) > 0) {
+  cat("   - epilepsy_GO_MF_high1overf_dotplot.pdf\n")
+  cat("   - epilepsy_GO_CC_high1overf_dotplot.pdf\n")
+  cat("   - epilepsy_GO_BP_high1overf_dotplot.pdf\n")
+  cat("   - epilepsy_GO_ALL_high1overf_dotplot.pdf\n")
+}
+```
+

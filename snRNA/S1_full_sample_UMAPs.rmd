@@ -1,0 +1,577 @@
+---
+title: "S1: Sample-Level UMAP Analysis"
+output: html_notebook
+---
+
+This script generates sample-level UMAPs and cell count reports:
+- Full UMAP colored by sample (all cells + neurons only)
+- Grid of individual sample UMAPs organized by patient and 1/f status
+- CSV reports of cell counts by sample and cell type
+
+## Setup
+
+```{r setup}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(tidyr)
+library(RColorBrewer)
+```
+
+## 1. Load Processed Object
+
+```{r load_object}
+# Load the annotated object created by S0
+obj <- readRDS("D:/Youssef Sibih/Seurat_Objects/oneoverf_combined_corrected_annotations.rds")
+
+# Create output directory if needed
+output_dir <- "d:/AbrahamDada/oneoverf/oneoverf_R1_10326/plots"
+if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+# Quick verification
+print(paste("Total cells:", ncol(obj)))
+print("Samples:")
+print(unique(obj@meta.data$exp))
+```
+
+## 2. Define Color Palettes
+
+```{r color_palettes}
+# Get unique samples and patients
+samples <- sort(unique(obj@meta.data$exp))
+patients <- sort(unique(obj@meta.data$patient_id))
+
+# Create a highly distinguishable color palette for samples (14 samples)
+# Combine colors from multiple palettes for maximum distinction
+sample_colors <- c(
+  "#E41A1C",
+  "#377EB8",
+  "#4DAF4A",
+  "#984EA3",
+  "#FF7F00",
+  "#A65628",
+  "#F781BF",
+  "#1B9E77",
+  "#D95F02",
+  "#7570B3",
+  "#E7298A",
+  "#66A61E",
+  "#E6AB02",
+  "#666666"
+)
+
+# Assign names to match sample order
+if (length(samples) <= length(sample_colors)) {
+  sample_colors <- sample_colors[1:length(samples)]
+  names(sample_colors) <- samples
+} else {
+  # If more samples than colors, extend
+  names(sample_colors) <- samples[1:length(sample_colors)]
+  extra_colors <- colorRampPalette(c("#1F78B4", "#33A02C", "#FB9A99"))(length(samples) - length(sample_colors))
+  names(extra_colors) <- samples[(length(sample_colors)+1):length(samples)]
+  sample_colors <- c(sample_colors, extra_colors)
+}
+
+# Print to verify
+print("Sample colors assigned:")
+print(sample_colors)
+
+# Colors for cell types
+celltype_colors <- c(
+  "Tumor" = "#E41A1C",
+  "Oligodendrocyte" = "#377EB8",
+  "Astrocyte" = "#4DAF4A",
+  "Neurons" = "#984EA3",
+  "Endothelial" = "#FF7F00",
+  "Myeloid/microglial" = "#FFFF33",
+  "Myeloid" = "#A65628",
+  "Mesenchymal" = "#F781BF",
+  "Erythroid" = "#999999"
+)
+
+# Colors for neuron subtypes (from existing code)
+neuron_subclass_colors <- c(
+  "L2/3 IT"    = "#FEC89A",
+  "L4 IT"      = "#FCD5CE",
+  "L5 IT"      = "#FFDAB9",
+  "L6 IT"      = "#F49595",
+  "L6 IT Car3" = "#F1CEBE",
+  "L5 ET"      = "#F3D17C",
+  "L6 CT"      = "#FCEFB4",
+  "L5/6 NP"    = "#F9ED85",
+  "L6b"        = "#FFCAE9",
+  "Chandelier" = "#A9E4DE",
+  "Sst Chodl"  = "#83B8C6",
+  "Lamp5"      = "#D0E444",
+  "Lamp5 Lhx6" = "#D0EDEF",
+  "Pax6"       = "#E1D3F8",
+  "Vip"        = "#B0B5ED",
+  "Sncg"       = "#D6DFE8",
+  "Pvalb"      = "#8FC0E3",
+  "Sst"        = "#7FB3D5"
+)
+```
+
+---
+
+# ALL SAMPLES ANALYSIS
+
+## 3. Full UMAP Colored by Sample (All Cells)
+
+```{r all_samples_umap}
+# Create UMAP colored by sample
+p_all_samples <- DimPlot(obj, group.by = "exp", cols = sample_colors, label = FALSE, pt.size = 0.1) +
+  ggtitle("All Cells UMAP Colored by Sample") +
+  theme(legend.position = "right",
+        plot.title = element_text(hjust = 0.5)) +
+  NoAxes()
+
+print(p_all_samples)
+
+# Save
+ggsave(filename = file.path(output_dir, "all_samples_umap.pdf"),
+       plot = p_all_samples,
+       device = "pdf",
+       width = 12, height = 8,
+       dpi = 300)
+
+print(paste("Saved:", file.path(output_dir, "all_samples_umap.pdf")))
+```
+
+## 4. Grid of Individual Sample UMAPs (All Cells)
+
+Create a 2-row grid where:
+- Row 1: High 1/f samples
+- Row 2: Low 1/f samples
+- Columns: One per patient
+
+```{r all_samples_grid}
+# Get UMAP coordinates
+umap_coords <- as.data.frame(Embeddings(obj, reduction = "umap"))
+colnames(umap_coords) <- c("UMAP_1", "UMAP_2")
+umap_coords$cell_id <- rownames(umap_coords)
+
+# Add metadata
+umap_data <- cbind(umap_coords, obj@meta.data[rownames(umap_coords), c("exp", "patient_id", "one_over_f_status", "manual_anot", "refined_annot")])
+
+# Get UMAP limits for consistent axes
+umap_xlim <- range(umap_data$UMAP_1)
+umap_ylim <- range(umap_data$UMAP_2)
+
+# Create individual plots for each sample - TWO VERSIONS: labeled and unlabeled
+plot_list_labeled <- list()
+plot_list_unlabeled <- list()
+
+for (sample in samples) {
+  sample_data <- umap_data[umap_data$exp == sample, ]
+  n_cells <- nrow(sample_data)
+  
+  # LABELED version (with sample name and n)
+  p_labeled <- ggplot(sample_data, aes(x = UMAP_1, y = UMAP_2, color = manual_anot)) +
+    geom_point(size = 0.3, alpha = 0.8) +
+    scale_color_manual(values = celltype_colors) +
+    xlim(umap_xlim) + ylim(umap_ylim) +
+    ggtitle(paste0(sample, "\n(n=", format(n_cells, big.mark = ","), ")")) +
+    theme_void() +
+    theme(plot.title = element_text(hjust = 0.5, size = 8),
+          legend.position = "none")
+  
+  # UNLABELED version (no title)
+  p_unlabeled <- ggplot(sample_data, aes(x = UMAP_1, y = UMAP_2, color = manual_anot)) +
+    geom_point(size = 0.3, alpha = 0.8) +
+    scale_color_manual(values = celltype_colors) +
+    xlim(umap_xlim) + ylim(umap_ylim) +
+    theme_void() +
+    theme(legend.position = "none")
+  
+  plot_list_labeled[[sample]] <- p_labeled
+  plot_list_unlabeled[[sample]] <- p_unlabeled
+}
+
+# Organize plots by patient (columns) and 1/f status (rows)
+# Get sample order: for each patient, high1overf first then low1overf
+sample_order <- umap_data %>%
+  select(exp, patient_id, one_over_f_status) %>%
+  distinct() %>%
+  arrange(patient_id, desc(one_over_f_status)) # high before low
+
+# Create a matrix layout
+high_samples <- sample_order$exp[sample_order$one_over_f_status == "high1overf"]
+low_samples <- sample_order$exp[sample_order$one_over_f_status == "low1overf"]
+
+# --- LABELED VERSION ---
+high_row_labeled <- wrap_plots(plot_list_labeled[high_samples], nrow = 1) + 
+  plot_annotation(title = "High 1/f")
+low_row_labeled <- wrap_plots(plot_list_labeled[low_samples], nrow = 1) + 
+  plot_annotation(title = "Low 1/f")
+
+p_grid_all_labeled <- high_row_labeled / low_row_labeled + 
+  plot_annotation(title = "All Cells: Individual Sample UMAPs",
+                  theme = theme(plot.title = element_text(hjust = 0.5, size = 14)))
+
+print(p_grid_all_labeled)
+
+ggsave(filename = file.path(output_dir, "all_samples_grid_by_patient_labeled.pdf"),
+       plot = p_grid_all_labeled,
+       device = "pdf",
+       width = 16, height = 8,
+       dpi = 300)
+print(paste("Saved:", file.path(output_dir, "all_samples_grid_by_patient_labeled.pdf")))
+
+# --- UNLABELED VERSION ---
+high_row_unlabeled <- wrap_plots(plot_list_unlabeled[high_samples], nrow = 1)
+low_row_unlabeled <- wrap_plots(plot_list_unlabeled[low_samples], nrow = 1)
+
+p_grid_all_unlabeled <- high_row_unlabeled / low_row_unlabeled
+
+print(p_grid_all_unlabeled)
+
+ggsave(filename = file.path(output_dir, "all_samples_grid_by_patient.pdf"),
+       plot = p_grid_all_unlabeled,
+       device = "pdf",
+       width = 16, height = 8,
+       dpi = 300)
+print(paste("Saved:", file.path(output_dir, "all_samples_grid_by_patient.pdf")))
+```
+
+## 5. Cell Counts CSV (All Samples)
+
+```{r all_samples_csv}
+# Create cell count table using manual_anot (broad categories): samples x cell types
+cell_counts_all <- as.data.frame.matrix(table(obj@meta.data$exp, obj@meta.data$manual_anot))
+cell_counts_all$sample_id <- rownames(cell_counts_all)
+cell_counts_all$total <- rowSums(cell_counts_all[, -ncol(cell_counts_all)])
+
+# Add patient_id and one_over_f_status
+sample_info <- obj@meta.data %>%
+  select(exp, patient_id, one_over_f_status, cortex_type) %>%
+  distinct()
+rownames(sample_info) <- sample_info$exp
+
+cell_counts_all$patient_id <- sample_info[cell_counts_all$sample_id, "patient_id"]
+cell_counts_all$one_over_f_status <- sample_info[cell_counts_all$sample_id, "one_over_f_status"]
+cell_counts_all$cortex_type <- sample_info[cell_counts_all$sample_id, "cortex_type"]
+
+# Reorder columns
+cell_counts_all <- cell_counts_all %>%
+  select(sample_id, patient_id, one_over_f_status, cortex_type, total, everything())
+
+# Sort by patient and 1/f status
+cell_counts_all <- cell_counts_all %>%
+  arrange(patient_id, desc(one_over_f_status))
+
+# Save
+write.csv(cell_counts_all, 
+          file.path(output_dir, "all_samples_cell_counts.csv"), 
+          row.names = FALSE)
+
+print("All Samples Cell Counts:")
+print(cell_counts_all)
+
+print(paste("Saved:", file.path(output_dir, "all_samples_cell_counts.csv")))
+```
+
+## 5b. Cell Counts CSV (Refined Annotations)
+
+This uses `refined_annot` which combines manual annotations with MapMyCells neuron subtypes.
+
+```{r refined_annot_csv}
+# Create cell count table using refined_annot: samples x refined cell types
+cell_counts_refined <- as.data.frame.matrix(table(obj@meta.data$exp, obj@meta.data$refined_annot))
+cell_counts_refined$sample_id <- rownames(cell_counts_refined)
+cell_counts_refined$total <- rowSums(cell_counts_refined[, -ncol(cell_counts_refined)])
+
+# Add patient_id and one_over_f_status
+cell_counts_refined$patient_id <- sample_info[cell_counts_refined$sample_id, "patient_id"]
+cell_counts_refined$one_over_f_status <- sample_info[cell_counts_refined$sample_id, "one_over_f_status"]
+cell_counts_refined$cortex_type <- sample_info[cell_counts_refined$sample_id, "cortex_type"]
+
+# Reorder columns
+cell_counts_refined <- cell_counts_refined %>%
+  select(sample_id, patient_id, one_over_f_status, cortex_type, total, everything())
+
+# Sort by patient and 1/f status
+cell_counts_refined <- cell_counts_refined %>%
+  arrange(patient_id, desc(one_over_f_status))
+
+# Save
+write.csv(cell_counts_refined, 
+          file.path(output_dir, "all_samples_refined_cell_counts.csv"), 
+          row.names = FALSE)
+
+print("All Samples Refined Cell Counts (includes neuron subtypes):")
+print(cell_counts_refined)
+
+print(paste("Saved:", file.path(output_dir, "all_samples_refined_cell_counts.csv")))
+```
+
+---
+
+# NEURONS-ONLY ANALYSIS
+
+## 6. Subset to Neurons
+
+```{r subset_neurons}
+# Subset to neurons only
+neuron_obj <- subset(obj, manual_anot == "Neurons")
+
+print(paste("Total neurons:", ncol(neuron_obj)))
+print("Neurons per sample:")
+table(neuron_obj@meta.data$exp)
+```
+
+## 7. Full UMAP Colored by Sample (Neurons Only)
+
+```{r neurons_umap}
+# Create UMAP colored by sample
+p_neurons_samples <- DimPlot(neuron_obj, group.by = "exp", cols = sample_colors, label = FALSE, pt.size = 0.3) +
+  ggtitle("Neurons Only UMAP Colored by Sample") +
+  theme(legend.position = "right",
+        plot.title = element_text(hjust = 0.5)) +
+  NoAxes()
+
+print(p_neurons_samples)
+
+# Save
+ggsave(filename = file.path(output_dir, "neurons_only_umap.pdf"),
+       plot = p_neurons_samples,
+       device = "pdf",
+       width = 12, height = 8,
+       dpi = 300)
+
+print(paste("Saved:", file.path(output_dir, "neurons_only_umap.pdf")))
+```
+
+## 8. Grid of Individual Sample UMAPs (Neurons Only)
+
+```{r neurons_grid}
+# Get UMAP coordinates for neurons
+neuron_umap_coords <- as.data.frame(Embeddings(neuron_obj, reduction = "umap"))
+colnames(neuron_umap_coords) <- c("UMAP_1", "UMAP_2")
+neuron_umap_coords$cell_id <- rownames(neuron_umap_coords)
+
+# Add metadata
+neuron_umap_data <- cbind(neuron_umap_coords, 
+                          neuron_obj@meta.data[rownames(neuron_umap_coords), 
+                                               c("exp", "patient_id", "one_over_f_status", "subclass_name")])
+
+# Get UMAP limits
+neuron_xlim <- range(neuron_umap_data$UMAP_1)
+neuron_ylim <- range(neuron_umap_data$UMAP_2)
+
+# Get samples that have neurons
+neuron_samples <- sort(unique(neuron_umap_data$exp))
+
+# Create individual plots for each sample - TWO VERSIONS: labeled and unlabeled
+neuron_plot_list_labeled <- list()
+neuron_plot_list_unlabeled <- list()
+
+for (sample in neuron_samples) {
+  sample_data <- neuron_umap_data[neuron_umap_data$exp == sample, ]
+  n_cells <- nrow(sample_data)
+  
+  if (n_cells == 0) next
+  
+  # LABELED version (with sample name and n)
+  p_labeled <- ggplot(sample_data, aes(x = UMAP_1, y = UMAP_2, color = subclass_name)) +
+    geom_point(size = 0.5, alpha = 0.8) +
+    scale_color_manual(values = neuron_subclass_colors, na.value = "darkgray") +
+    xlim(neuron_xlim) + ylim(neuron_ylim) +
+    ggtitle(paste0(sample, "\n(n=", format(n_cells, big.mark = ","), ")")) +
+    theme_void() +
+    theme(plot.title = element_text(hjust = 0.5, size = 8),
+          legend.position = "none")
+  
+  # UNLABELED version (no title)
+  p_unlabeled <- ggplot(sample_data, aes(x = UMAP_1, y = UMAP_2, color = subclass_name)) +
+    geom_point(size = 0.5, alpha = 0.8) +
+    scale_color_manual(values = neuron_subclass_colors, na.value = "darkgray") +
+    xlim(neuron_xlim) + ylim(neuron_ylim) +
+    theme_void() +
+    theme(legend.position = "none")
+  
+  neuron_plot_list_labeled[[sample]] <- p_labeled
+  neuron_plot_list_unlabeled[[sample]] <- p_unlabeled
+}
+
+# Organize by patient and 1/f status
+neuron_sample_order <- neuron_umap_data %>%
+  select(exp, patient_id, one_over_f_status) %>%
+  distinct() %>%
+  arrange(patient_id, desc(one_over_f_status))
+
+high_neuron_samples <- neuron_sample_order$exp[neuron_sample_order$one_over_f_status == "high1overf"]
+low_neuron_samples <- neuron_sample_order$exp[neuron_sample_order$one_over_f_status == "low1overf"]
+
+# Filter to samples that have plots
+high_neuron_samples <- high_neuron_samples[high_neuron_samples %in% names(neuron_plot_list_labeled)]
+low_neuron_samples <- low_neuron_samples[low_neuron_samples %in% names(neuron_plot_list_labeled)]
+
+# --- LABELED VERSION ---
+if (length(high_neuron_samples) > 0) {
+  high_neuron_row_labeled <- wrap_plots(neuron_plot_list_labeled[high_neuron_samples], nrow = 1) + 
+    plot_annotation(title = "High 1/f")
+} else {
+  high_neuron_row_labeled <- plot_spacer()
+}
+
+if (length(low_neuron_samples) > 0) {
+  low_neuron_row_labeled <- wrap_plots(neuron_plot_list_labeled[low_neuron_samples], nrow = 1) + 
+    plot_annotation(title = "Low 1/f")
+} else {
+  low_neuron_row_labeled <- plot_spacer()
+}
+
+p_grid_neurons_labeled <- high_neuron_row_labeled / low_neuron_row_labeled + 
+  plot_annotation(title = "Neurons Only: Individual Sample UMAPs",
+                  theme = theme(plot.title = element_text(hjust = 0.5, size = 14)))
+
+print(p_grid_neurons_labeled)
+
+ggsave(filename = file.path(output_dir, "neurons_only_grid_by_patient_labeled.pdf"),
+       plot = p_grid_neurons_labeled,
+       device = "pdf",
+       width = 16, height = 8,
+       dpi = 300)
+print(paste("Saved:", file.path(output_dir, "neurons_only_grid_by_patient_labeled.pdf")))
+
+# --- UNLABELED VERSION ---
+if (length(high_neuron_samples) > 0) {
+  high_neuron_row_unlabeled <- wrap_plots(neuron_plot_list_unlabeled[high_neuron_samples], nrow = 1)
+} else {
+  high_neuron_row_unlabeled <- plot_spacer()
+}
+
+if (length(low_neuron_samples) > 0) {
+  low_neuron_row_unlabeled <- wrap_plots(neuron_plot_list_unlabeled[low_neuron_samples], nrow = 1)
+} else {
+  low_neuron_row_unlabeled <- plot_spacer()
+}
+
+p_grid_neurons_unlabeled <- high_neuron_row_unlabeled / low_neuron_row_unlabeled
+
+print(p_grid_neurons_unlabeled)
+
+ggsave(filename = file.path(output_dir, "neurons_only_grid_by_patient.pdf"),
+       plot = p_grid_neurons_unlabeled,
+       device = "pdf",
+       width = 16, height = 8,
+       dpi = 300)
+print(paste("Saved:", file.path(output_dir, "neurons_only_grid_by_patient.pdf")))
+```
+
+## 9. Cell Counts CSV (Neurons Only - by Subclass)
+
+```{r neurons_csv}
+# Create cell count table: samples x neuron subtypes (subclass_name)
+neuron_counts <- as.data.frame.matrix(table(neuron_obj@meta.data$exp, 
+                                            neuron_obj@meta.data$subclass_name, 
+                                            useNA = "ifany"))
+
+# Rename NA column if exists
+if ("NA" %in% colnames(neuron_counts) || any(is.na(colnames(neuron_counts)))) {
+  na_col <- which(is.na(colnames(neuron_counts)) | colnames(neuron_counts) == "NA")
+  if (length(na_col) > 0) {
+    colnames(neuron_counts)[na_col] <- "Unassigned"
+  }
+}
+
+neuron_counts$sample_id <- rownames(neuron_counts)
+neuron_counts$total <- rowSums(neuron_counts[, -ncol(neuron_counts)])
+
+# Add sample info
+neuron_sample_info <- neuron_obj@meta.data %>%
+  select(exp, patient_id, one_over_f_status, cortex_type) %>%
+  distinct()
+rownames(neuron_sample_info) <- neuron_sample_info$exp
+
+neuron_counts$patient_id <- neuron_sample_info[neuron_counts$sample_id, "patient_id"]
+neuron_counts$one_over_f_status <- neuron_sample_info[neuron_counts$sample_id, "one_over_f_status"]
+neuron_counts$cortex_type <- neuron_sample_info[neuron_counts$sample_id, "cortex_type"]
+
+# Reorder columns
+neuron_counts <- neuron_counts %>%
+  select(sample_id, patient_id, one_over_f_status, cortex_type, total, everything())
+
+# Sort by patient and 1/f status
+neuron_counts <- neuron_counts %>%
+  arrange(patient_id, desc(one_over_f_status))
+
+# Save
+write.csv(neuron_counts, 
+          file.path(output_dir, "neurons_only_cell_counts.csv"), 
+          row.names = FALSE)
+
+print("Neurons Only Cell Counts (by subclass):")
+print(neuron_counts)
+
+print(paste("Saved:", file.path(output_dir, "neurons_only_cell_counts.csv")))
+```
+
+## 10. Additional: Cell Counts by Class (Glutamatergic vs GABAergic)
+
+```{r neurons_class_csv}
+# Create cell count table: samples x class_name
+neuron_class_counts <- as.data.frame.matrix(table(neuron_obj@meta.data$exp, 
+                                                   neuron_obj@meta.data$class_name, 
+                                                   useNA = "ifany"))
+
+# Rename NA column if exists
+if (any(is.na(colnames(neuron_class_counts)))) {
+  na_col <- which(is.na(colnames(neuron_class_counts)))
+  colnames(neuron_class_counts)[na_col] <- "Unassigned"
+}
+
+neuron_class_counts$sample_id <- rownames(neuron_class_counts)
+neuron_class_counts$total <- rowSums(neuron_class_counts[, -ncol(neuron_class_counts)])
+
+# Add sample info
+neuron_class_counts$patient_id <- neuron_sample_info[neuron_class_counts$sample_id, "patient_id"]
+neuron_class_counts$one_over_f_status <- neuron_sample_info[neuron_class_counts$sample_id, "one_over_f_status"]
+neuron_class_counts$cortex_type <- neuron_sample_info[neuron_class_counts$sample_id, "cortex_type"]
+
+# Reorder columns
+neuron_class_counts <- neuron_class_counts %>%
+  select(sample_id, patient_id, one_over_f_status, cortex_type, total, everything())
+
+# Sort
+neuron_class_counts <- neuron_class_counts %>%
+  arrange(patient_id, desc(one_over_f_status))
+
+# Save
+write.csv(neuron_class_counts, 
+          file.path(output_dir, "neurons_only_class_counts.csv"), 
+          row.names = FALSE)
+
+print("Neurons Only Cell Counts (by class - Glutamatergic vs GABAergic):")
+print(neuron_class_counts)
+
+print(paste("Saved:", file.path(output_dir, "neurons_only_class_counts.csv")))
+```
+
+## Summary
+
+```{r summary}
+print("=== OUTPUT SUMMARY ===")
+print("")
+print("PDFs created:")
+print(paste("  1.", file.path(output_dir, "all_samples_umap.pdf")))
+print(paste("  2.", file.path(output_dir, "all_samples_grid_by_patient.pdf"), "(no labels)"))
+print(paste("  3.", file.path(output_dir, "all_samples_grid_by_patient_labeled.pdf"), "(with labels)"))
+print(paste("  4.", file.path(output_dir, "neurons_only_umap.pdf")))
+print(paste("  5.", file.path(output_dir, "neurons_only_grid_by_patient.pdf"), "(no labels)"))
+print(paste("  6.", file.path(output_dir, "neurons_only_grid_by_patient_labeled.pdf"), "(with labels)"))
+print("")
+print("CSVs created:")
+print(paste("  1.", file.path(output_dir, "all_samples_cell_counts.csv"), "(broad cell types)"))
+print(paste("  2.", file.path(output_dir, "all_samples_refined_cell_counts.csv"), "(with neuron subtypes)"))
+print(paste("  3.", file.path(output_dir, "neurons_only_cell_counts.csv"), "(neuron subclasses)"))
+print(paste("  4.", file.path(output_dir, "neurons_only_class_counts.csv"), "(Glut vs GABA)"))
+```
+
+## Session Info
+
+```{r session_info}
+sessionInfo()
+```

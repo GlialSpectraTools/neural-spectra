@@ -1,0 +1,489 @@
+---
+title: "Neftel Cell States Analysis"
+output: html_notebook
+---
+
+This script assigns Neftel glioma cell states (AC, MES, NPC, OPC) to tumor neurons and compares their proportions in steep vs flat 1/f across different glioma types.
+
+## 1. Load Libraries
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(readxl)
+library(tidyr)
+```
+
+## 2. Load and Process Neftel Gene Lists
+
+```{r}
+# Read the Neftel gene lists from Excel file (Table S2)
+# Skip first 3 rows (description), row 4 has headers, data starts row 5
+excel_path <- "C:/Users/Administrator/Downloads/1-s2.0-S0092867419306877-mmc2.xlsx"
+
+cat("Reading Excel file...\n")
+cat("File path:", excel_path, "\n\n")
+
+# Read starting from row 4 (skip first 3 description rows)
+gene_lists_raw <- read_excel(excel_path, sheet = 1, skip = 3)
+
+cat("Gene lists loaded from Excel\n")
+cat("Dimensions:", nrow(gene_lists_raw), "rows x", ncol(gene_lists_raw), "columns\n")
+cat("Column names:", paste(colnames(gene_lists_raw), collapse = ", "), "\n\n")
+
+# Display first few rows
+cat("First 10 genes from each list:\n")
+print(head(gene_lists_raw, 10))
+
+# Extract gene lists for each state
+# Column names should now be: MES2, MES1, AC, OPC, NPC1, NPC2, G1/S, G2/M
+MES1_genes <- na.omit(as.character(gene_lists_raw$MES1))
+MES2_genes <- na.omit(as.character(gene_lists_raw$MES2))
+AC_genes <- na.omit(as.character(gene_lists_raw$AC))
+OPC_genes <- na.omit(as.character(gene_lists_raw$OPC))
+NPC1_genes <- na.omit(as.character(gene_lists_raw$NPC1))
+NPC2_genes <- na.omit(as.character(gene_lists_raw$NPC2))
+
+cat("Gene list sizes:\n")
+cat("  MES1:", length(MES1_genes), "genes\n")
+cat("  MES2:", length(MES2_genes), "genes\n")
+cat("  AC:", length(AC_genes), "genes\n")
+cat("  OPC:", length(OPC_genes), "genes\n")
+cat("  NPC1:", length(NPC1_genes), "genes\n")
+cat("  NPC2:", length(NPC2_genes), "genes\n")
+
+# Save gene lists as CSV for reference
+csv_dir <- "D:/AbrahamDada/oneoverf/oneoverf_R1_10326/csv"
+if (!dir.exists(csv_dir)) {
+  dir.create(csv_dir, recursive = TRUE)
+}
+
+write.csv(gene_lists_raw, file.path(csv_dir, "neftel_gene_lists.csv"), row.names = FALSE)
+cat("\nGene lists saved to:", file.path(csv_dir, "neftel_gene_lists.csv"), "\n")
+```
+
+## 3. Load Neurons + Tumor Object and Subset to Tumor Cells
+
+```{r}
+# Load the neurons + tumor object
+obj_full <- readRDS("D:/Youssef Sibih/Seurat_Objects/neurons_tumor_Glioma.rds")
+
+cat("Object loaded successfully!\n")
+cat("Total cells:", ncol(obj_full), "\n")
+
+# Check what column identifies tumor cells
+cat("\nChecking for tumor cell identifier...\n")
+cat("Metadata columns:", paste(colnames(obj_full@meta.data), collapse = ", "), "\n\n")
+
+# Check Idents
+cat("Current Idents:\n")
+print(table(Idents(obj_full)))
+
+# Check manual_annot if it exists
+if ("manual_annot" %in% colnames(obj_full@meta.data)) {
+  cat("\nmanual_annot values:\n")
+  print(table(obj_full$manual_annot, useNA = "ifany"))
+}
+
+# Subset to Tumor cells only
+# Assuming Idents or manual_annot contains "Tumor" for tumor cells
+if ("manual_annot" %in% colnames(obj_full@meta.data)) {
+  obj <- subset(obj_full, subset = manual_annot == "Tumor")
+  cat("\n✓ Subset to Tumor cells using manual_annot\n")
+} else if ("manual_anot" %in% colnames(obj_full@meta.data)) {
+  obj <- subset(obj_full, subset = manual_anot == "Tumor")
+  cat("\n✓ Subset to Tumor cells using manual_anot\n")
+} else {
+  # Try using Idents if manual_annot doesn't exist
+  Idents(obj_full) <- obj_full@active.ident
+  obj <- subset(obj_full, idents = "Tumor")
+  cat("\n✓ Subset to Tumor cells using Idents\n")
+}
+
+cat("Tumor cells only:", ncol(obj), "\n")
+cat("Unique cortex types in tumor cells:", paste(unique(obj$cortex_type), collapse = ", "), "\n\n")
+
+# Display distribution by cortex type
+cat("Tumor cell distribution by cortex type:\n")
+print(table(obj$cortex_type, useNA = "ifany"))
+
+# Display 1/f status distribution in tumor cells
+if ("one_over_f_status" %in% colnames(obj@meta.data)) {
+  cat("\nTumor cell distribution by one_over_f_status:\n")
+  print(table(obj$one_over_f_status, useNA = "ifany"))
+  
+  cat("\nCross-tabulation (cortex_type x one_over_f_status):\n")
+  print(table(obj$cortex_type, obj$one_over_f_status, useNA = "ifany"))
+}
+
+# Basic UMAP
+DimPlot(obj, group.by = "cortex_type", label = TRUE) +
+  ggtitle("Tumor Cells Only")
+```
+
+## 4. Calculate Neftel Module Scores
+
+```{r}
+cat("Calculating module scores for Neftel cell states...\n")
+
+# Add module scores for each state
+# Following Neftel et al. methods: assay="SCT", nbin=30, search=TRUE
+obj <- AddModuleScore(obj, features = list(MES1_genes), 
+                      name = "MES1_score", assay = "SCT", nbin = 30, search = TRUE)
+
+obj <- AddModuleScore(obj, features = list(MES2_genes), 
+                      name = "MES2_score", assay = "SCT", nbin = 30, search = TRUE)
+
+obj <- AddModuleScore(obj, features = list(AC_genes), 
+                      name = "AC_score", assay = "SCT", nbin = 30, search = TRUE)
+
+obj <- AddModuleScore(obj, features = list(OPC_genes), 
+                      name = "OPC_score", assay = "SCT", nbin = 30, search = TRUE)
+
+obj <- AddModuleScore(obj, features = list(NPC1_genes), 
+                      name = "NPC1_score", assay = "SCT", nbin = 30, search = TRUE)
+
+obj <- AddModuleScore(obj, features = list(NPC2_genes), 
+                      name = "NPC2_score", assay = "SCT", nbin = 30, search = TRUE)
+
+cat("Module scores calculated successfully!\n")
+cat("New columns added:", "MES1_score1, MES2_score1, AC_score1, OPC_score1, NPC1_score1, NPC2_score1\n")
+```
+
+## 5. Assign Cell States
+
+```{r}
+cat("Assigning cell states based on highest module score...\n")
+
+# Create a matrix of scores for comparison
+score_matrix <- data.frame(
+  MES1 = obj$MES1_score1,
+  MES2 = obj$MES2_score1,
+  AC = obj$AC_score1,
+  OPC = obj$OPC_score1,
+  NPC1 = obj$NPC1_score1,
+  NPC2 = obj$NPC2_score1
+)
+
+# Find which state has the highest score for each cell
+highest_state <- apply(score_matrix, 1, function(x) colnames(score_matrix)[which.max(x)])
+
+# Collapse MES1/MES2 to MES, and NPC1/NPC2 to NPC
+neftel_state <- case_when(
+  highest_state == "MES1" ~ "MES",
+  highest_state == "MES2" ~ "MES",
+  highest_state == "NPC1" ~ "NPC",
+  highest_state == "NPC2" ~ "NPC",
+  highest_state == "AC" ~ "AC",
+  highest_state == "OPC" ~ "OPC",
+  TRUE ~ NA_character_
+)
+
+# Add to metadata
+obj$neftel_state <- neftel_state
+
+cat("Cell state assignment complete!\n")
+cat("State distribution:\n")
+print(table(obj$neftel_state, useNA = "ifany"))
+
+# Visualize
+DimPlot(obj, group.by = "neftel_state", label = TRUE) +
+  ggtitle("Neftel Cell States")
+```
+
+## 6. Generate Stacked Bar Plot (All in One Figure)
+
+```{r}
+library(patchwork)
+
+# Define color scheme for cell states
+neftel_colors <- c(
+  "AC" = "#FF7F00",    # Orange
+  "MES" = "#E377C2",   # Pink
+  "NPC" = "#4DAF4A",   # Green
+  "OPC" = "#8C564B"    # Brown
+)
+
+# Create output directory for plots
+plot_dir <- "D:/AbrahamDada/oneoverf/oneoverf_R1_10326/plots"
+if (!dir.exists(plot_dir)) {
+  dir.create(plot_dir, recursive = TRUE)
+}
+
+# Create combined proportion table for all conditions
+prop_data <- obj@meta.data %>%
+  group_by(cortex_type, one_over_f_status, neftel_state) %>%
+  summarise(Freq = n(), .groups = "drop") %>%
+  group_by(cortex_type, one_over_f_status) %>%
+  mutate(prop = Freq / sum(Freq)) %>%
+  ungroup()
+
+# Create factors with proper ordering
+prop_data <- prop_data %>%
+  mutate(
+    cortex_type = factor(cortex_type, levels = c("oligodendroglioma", "astrocytoma", "glioblastoma")),
+    one_over_f_status = factor(one_over_f_status, levels = c("high1overf", "low1overf")),
+    neftel_state = factor(neftel_state, levels = c("AC", "MES", "NPC", "OPC")),
+    # Create short labels for x-axis
+    status_label = case_when(
+      one_over_f_status == "high1overf" ~ "High",
+      one_over_f_status == "low1overf" ~ "Low"
+    )
+  )
+
+# Create stacked bar plot with faceting for visual grouping
+p_bars <- ggplot(prop_data, aes(x = status_label, y = prop, fill = neftel_state)) +
+  geom_bar(stat = "identity", position = "stack", width = 0.6) +
+  facet_wrap(~ cortex_type, nrow = 1, strip.position = "bottom",
+             labeller = labeller(cortex_type = c(
+               "oligodendroglioma" = "Oligodendroglioma",
+               "astrocytoma" = "Astrocytoma",
+               "glioblastoma" = "Glioblastoma"
+             ))) +
+  scale_fill_manual(values = neftel_colors, name = "Cell State") +
+  labs(x = NULL, y = "Proportion") +
+  theme_classic(base_size = 11) +
+  theme(axis.text.x = element_text(size = 9),
+        strip.background = element_rect(fill = "white", color = "black"),
+        strip.text = element_text(face = "bold", size = 10),
+        strip.placement = "outside",
+        legend.position = "right",
+        panel.spacing = unit(1.5, "lines"))  # Add spacing between facets
+
+# Save the bar plot
+ggsave(filename = "neftel_states_barplot.pdf", 
+       plot = p_bars, 
+       path = plot_dir, 
+       width = 10, height = 6, 
+       device = "pdf", dpi = 600)
+
+p_bars
+```
+
+## 7. Generate Quadrant Plots (3x2 Grid)
+
+```{r}
+# Calculate coordinates for quadrant plots following Neftel et al. methodology
+
+# For MES scores, use the maximum of MES1 and MES2
+obj$MES_score <- pmax(obj$MES1_score1, obj$MES2_score1)
+
+# For NPC scores, use the maximum of NPC1 and NPC2
+obj$NPC_score <- pmax(obj$NPC1_score1, obj$NPC2_score1)
+
+# Calculate x and y coordinates
+obj$neftel_x <- case_when(
+  obj$neftel_state %in% c("NPC", "OPC") ~ log2(abs(obj$NPC_score - obj$OPC_score1) + 1),
+  obj$neftel_state %in% c("AC", "MES") ~ log2(abs(obj$MES_score - obj$AC_score1) + 1),
+  TRUE ~ 0
+)
+
+# Multiply x by -1 for OPC and AC (to place them on the left)
+obj$neftel_x <- ifelse(obj$neftel_state %in% c("OPC", "AC"), 
+                       -obj$neftel_x, 
+                       obj$neftel_x)
+
+# Calculate y coordinate (same for all cells)
+obj$neftel_y <- pmax(obj$OPC_score1, obj$NPC_score) - pmax(obj$AC_score1, obj$MES_score)
+
+# Function to create quadrant plot for one condition
+plot_quadrant <- function(obj, cortex_type_name, oneoverf_status, colors) {
+  # Subset
+  obj_subset <- subset(obj, subset = cortex_type == cortex_type_name & one_over_f_status == oneoverf_status)
+  
+  # Extract data
+  plot_df <- data.frame(
+    x = obj_subset$neftel_x,
+    y = obj_subset$neftel_y,
+    state = obj_subset$neftel_state
+  )
+  
+  # Create plot
+  p <- ggplot(plot_df, aes(x = x, y = y, color = state)) +
+    geom_point(size = 0.5, alpha = 0.6) +
+    scale_color_manual(values = colors, name = "Cell State") +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+    labs(title = paste0(cortex_type_name, " - ", oneoverf_status),
+         x = "AC/OPC ← → MES/NPC",
+         y = "OPC/NPC ← → AC/MES") +
+    theme_classic(base_size = 9) +
+    theme(plot.title = element_text(hjust = 0.5, size = 8),
+          legend.position = "none")
+  
+  return(p)
+}
+
+# Generate all 6 quadrant plots
+# Row 1: Oligodendroglioma (high, low)
+q1 <- plot_quadrant(obj, "oligodendroglioma", "high1overf", neftel_colors)
+q2 <- plot_quadrant(obj, "oligodendroglioma", "low1overf", neftel_colors)
+
+# Row 2: Astrocytoma (high, low)
+q3 <- plot_quadrant(obj, "astrocytoma", "high1overf", neftel_colors)
+q4 <- plot_quadrant(obj, "astrocytoma", "low1overf", neftel_colors)
+
+# Row 3: Glioblastoma (high, low)
+q5 <- plot_quadrant(obj, "glioblastoma", "high1overf", neftel_colors)
+q6 <- plot_quadrant(obj, "glioblastoma", "low1overf", neftel_colors)
+
+# Combine into 3x2 grid
+combined_quadrants <- (q1 | q2) / (q3 | q4) / (q5 | q6) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    title = "Neftel Cell States - Quadrant Plots",
+    theme = theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"))
+  )
+
+# Save the quadrant plots
+ggsave(filename = "neftel_states_quadrants.pdf", 
+       plot = combined_quadrants, 
+       path = plot_dir, 
+       width = 10, height = 12, 
+       device = "pdf", dpi = 600)
+
+combined_quadrants
+```
+
+## 8. Chi-Square Analysis for Each Pathology
+
+```{r}
+library(gridExtra)
+library(grid)
+
+cat("=== Chi-Square Analysis ===\n\n")
+
+# Function to perform chi-square test and create result table
+chisq_analysis <- function(obj, cortex_type_name) {
+  # Subset to specific cortex type
+  obj_subset <- subset(obj, subset = cortex_type == cortex_type_name)
+  
+  # Create contingency table
+  cont_table <- table(obj_subset$one_over_f_status, obj_subset$neftel_state)
+  
+  cat(cortex_type_name, ":\n")
+  print(cont_table)
+  cat("\n")
+  
+  # Perform chi-square test
+  chisq_result <- chisq.test(cont_table)
+  
+  cat("Chi-square statistic:", chisq_result$statistic, "\n")
+  cat("P-value:", chisq_result$p.value, "\n")
+  cat("Degrees of freedom:", chisq_result$parameter, "\n\n")
+  
+  # Create result data frame
+  result_df <- data.frame(
+    Statistic = c("Chi-square", "P-value", "Degrees of freedom", "Significant (p<0.05)"),
+    Value = c(
+      round(chisq_result$statistic, 4),
+      ifelse(chisq_result$p.value < 2.2e-16, 
+             "< 2.2e-16", 
+             formatC(chisq_result$p.value, format = "e", digits = 10)),
+      chisq_result$parameter,
+      ifelse(chisq_result$p.value < 0.05, "Yes", "No")
+    )
+  )
+  
+  # Add contingency table to result with n (%) format
+  cont_df <- as.data.frame.matrix(cont_table)
+  
+  # Calculate percentages for each row
+  cont_df_pct <- cont_df / rowSums(cont_df) * 100
+  
+  # Combine counts and percentages as "n (%)"
+  for (col in colnames(cont_df)) {
+    cont_df[[col]] <- paste0(cont_df[[col]], " (", round(cont_df_pct[[col]], 1), "%)")
+  }
+  
+  cont_df$one_over_f_status <- rownames(cont_df)
+  cont_df <- cont_df[, c("one_over_f_status", colnames(cont_df)[1:(ncol(cont_df)-1)])]
+  
+  # Create a table plot
+  title_grob <- textGrob(paste("Chi-Square Test:", cortex_type_name), 
+                         gp = gpar(fontsize = 14, fontface = "bold"))
+  
+  subtitle_grob <- textGrob("Contingency Table (one_over_f_status x neftel_state)", 
+                            gp = gpar(fontsize = 10))
+  
+  cont_table_grob <- tableGrob(cont_df, rows = NULL, 
+                               theme = ttheme_default(base_size = 10))
+  
+  spacer <- rectGrob(gp = gpar(col = NA, fill = NA), height = unit(0.3, "cm"))
+  
+  stats_grob <- tableGrob(result_df, rows = NULL, 
+                          theme = ttheme_default(base_size = 10))
+  
+  # Combine into one plot
+  combined_grob <- arrangeGrob(title_grob, subtitle_grob, spacer, 
+                               cont_table_grob, spacer, stats_grob,
+                               ncol = 1, heights = c(0.5, 0.3, 0.2, 1.5, 0.2, 1))
+  
+  return(list(result = chisq_result, grob = combined_grob))
+}
+
+# Perform chi-square analysis for each cortex type
+chisq_oligo <- chisq_analysis(obj, "oligodendroglioma")
+chisq_astro <- chisq_analysis(obj, "astrocytoma")
+chisq_gbm <- chisq_analysis(obj, "glioblastoma")
+
+# Save each as PDF
+ggsave(filename = "neftel_chisquare_oligodendroglioma.pdf", 
+       plot = chisq_oligo$grob, 
+       path = plot_dir, 
+       width = 8, height = 6, 
+       device = "pdf", dpi = 600)
+
+ggsave(filename = "neftel_chisquare_astrocytoma.pdf", 
+       plot = chisq_astro$grob, 
+       path = plot_dir, 
+       width = 8, height = 6, 
+       device = "pdf", dpi = 600)
+
+ggsave(filename = "neftel_chisquare_glioblastoma.pdf", 
+       plot = chisq_gbm$grob, 
+       path = plot_dir, 
+       width = 8, height = 6, 
+       device = "pdf", dpi = 600)
+
+cat("Chi-square test PDFs saved for each pathology\n")
+```
+
+## 9. Summary Statistics
+
+```{r}
+cat("=== Neftel Cell States Summary ===\n\n")
+
+# Overall distribution
+cat("Overall state distribution:\n")
+print(table(obj$neftel_state, useNA = "ifany"))
+
+# By cortex type
+cat("\nBy cortex type:\n")
+print(table(obj$cortex_type, obj$neftel_state, useNA = "ifany"))
+
+# By one_over_f_status
+if ("one_over_f_status" %in% colnames(obj@meta.data)) {
+  cat("\nBy one_over_f_status:\n")
+  print(table(obj$one_over_f_status, obj$neftel_state, useNA = "ifany"))
+  
+  # Three-way table
+  cat("\nDetailed breakdown (cortex_type x one_over_f_status x neftel_state):\n")
+  for (ct in unique(obj$cortex_type)) {
+    cat("\n", ct, ":\n")
+    obj_ct <- subset(obj, subset = cortex_type == ct)
+    print(table(obj_ct$one_over_f_status, obj_ct$neftel_state, useNA = "ifany"))
+  }
+}
+
+cat("\n=== Outputs Created ===\n")
+cat("1. Gene lists CSV:", file.path(csv_dir, "neftel_gene_lists.csv"), "\n")
+cat("2. Plots saved to:", plot_dir, "\n")
+cat("   - neftel_states_barplot.pdf (6 bars: high/low for oligo, astro, gbm)\n")
+cat("   - neftel_states_quadrants.pdf (3x2 grid: quadrant plots for each condition)\n")
+cat("   - neftel_chisquare_oligodendroglioma.pdf (chi-square test table)\n")
+cat("   - neftel_chisquare_astrocytoma.pdf (chi-square test table)\n")
+cat("   - neftel_chisquare_glioblastoma.pdf (chi-square test table)\n")
+```
+

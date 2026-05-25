@@ -1,0 +1,217 @@
+---
+title: "Prepare Main OneOverF Object with All Metadata"
+output: html_notebook
+---
+
+This script loads the main oneoverf object, adds all necessary metadata corrections, MapMyCells annotations, and module scores, then saves it for downstream analyses.
+
+## 1. Load Libraries
+
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(RColorBrewer)
+library(ggpubr)
+library(writexl)
+```
+
+## 2. Load Combined R Object
+
+```{r}
+setwd("C:/YS_Backup")
+obj <- readRDS("D:/Youssef Sibih/Seurat_Objects/oneoverf_combined_submap_cells_snc_sct_complete.rds")
+
+cat("Object loaded successfully!\n")
+cat("Total cells:", ncol(obj), "\n")
+cat("Total genes:", nrow(obj), "\n\n")
+
+DimPlot(obj, label = TRUE)
+```
+
+## 3. Store Default Idents and Add Extra Metadata
+
+```{r}
+obj@meta.data$default_ident <- Idents(obj)
+
+# Initialize 'cortex_type' with values from 'glioma_subtype'
+obj@meta.data$cortex_type <- obj@meta.data$glioma_subtype
+
+obj@meta.data$cortex_type[obj@meta.data$exp %in% c("SF524_3", "SF524_1")] <- "Normal Cortex"
+
+# Fix new high one overf
+cells_to_update1 <- WhichCells(obj, 
+                              expression = exp == "SF490_8" & one_over_f_status == "low1overf")
+obj@meta.data[cells_to_update1, "one_over_f_status"] <- "high1overf"
+
+cells_to_update2 <- WhichCells(obj, 
+                              expression = exp == "SF495_6" & one_over_f_status == "low1overf")
+obj@meta.data[cells_to_update2, "one_over_f_status"] <- "high1overf"
+
+# Fix low oneoverf
+cells_to_update3 <- WhichCells(obj, 
+                              expression = exp == "SF490_3" & one_over_f_status == "high1overf")
+obj@meta.data[cells_to_update3, "one_over_f_status"] <- "low1overf"
+
+cells_to_update3 <- WhichCells(obj, 
+                              expression = exp == "SF495_1" & one_over_f_status == "high1overf")
+obj@meta.data[cells_to_update3, "one_over_f_status"] <- "low1overf"
+
+cat("Metadata added and one_over_f_status corrected\n")
+cat("Cortex type distribution:\n")
+print(table(obj@meta.data$cortex_type, useNA = "ifany"))
+cat("\none_over_f_status by experiment:\n")
+print(table(obj@meta.data$exp, obj@meta.data$one_over_f_status, useNA = "ifany"))
+```
+
+## 4. Assign Cluster Annotations
+
+```{r}
+cluster_ids <- c(
+  "0" = "Tumor",
+  "1" = "Oligodendrocyte",
+  "2" = "Endothelial",
+  "3" = "Oligodendrocyte",
+  "4" = "Astrocyte",
+  "5" = "Oligodendrocyte",
+  "6" = "Neurons",
+  "7" = "Myeloid/microglial",
+  "8" = "Astrocyte",
+  "9" = "Tumor",
+  "10" = "Neurons",
+  "11" = "Neurons",
+  "12" = "Tumor",
+  "13" = "Neurons",
+  "14" = "Neurons",
+  "15" = "Neurons",
+  "16" = "Neurons",
+  "17" = "Neurons",
+  "18" = "Oligodendrocyte",
+  "19" = "Tumor",
+  "20" = "Oligodendrocyte",
+  "21" = "Mesenchymal",
+  "22" = "Erythroid",
+  "23" = "Oligodendrocyte",
+  "24" = "Neurons",
+  "25" = "Tumor",
+  "26" = "Myeloid",
+  "27" = "Neurons",
+  "28" = "Tumor",
+  "29" = "Oligodendrocyte",
+  "30" = "Tumor",
+  "31" = "Neurons",
+  "32" = "Neurons",
+  "33" = "Astrocyte",
+  "34" = "Tumor"
+)
+
+names(cluster_ids) <- levels(obj)
+obj <- RenameIdents(obj, cluster_ids)
+
+# Store manual annotations
+obj$manual_annot <- Idents(obj)
+
+cat("Manual annotations assigned\n")
+print(table(obj$manual_annot, useNA = "ifany"))
+
+DimPlot(obj, label = TRUE) + ggtitle("Manual Annotations")
+```
+
+## 5. Subset to Neurons
+
+```{r}
+neuron_obj <- subset(x = obj, idents = "Neurons")
+
+cat("Neuron subset created\n")
+cat("Total neurons:", ncol(neuron_obj), "\n")
+```
+
+## 6. Add MapMyCells Annotations
+
+```{r}
+library(anndata)
+
+# Define mapping files for Neurons 1 & 2
+mapping_files <- list(
+  neurons_1 = "C:/YS_Backup/Neurons_1_MTG/neurons_anndata_group1.csv",
+  neurons_2 = "C:/YS_Backup/Neurons_2_MTG/neurons_anndata_group2.csv"
+)
+
+# Load and combine both annotations
+all_mappings <- lapply(mapping_files, function(file) {
+  mapping <- read.csv(file, comment.char = "#")
+  rownames(mapping) <- mapping$cell_id  # Ensure rownames are set
+  return(mapping[, c("class_name", "subclass_name")])  # Keep only relevant columns
+})
+
+# Merge both neuron group mappings
+combined_mapping <- bind_rows(all_mappings)
+
+# Ensure only matching cell IDs are used
+common_cells <- intersect(rownames(neuron_obj@meta.data), rownames(combined_mapping))
+
+cat("Found", length(common_cells), "cells with MapMyCells annotations\n")
+
+# Subset combined mapping to include only cells in neuron_obj
+combined_mapping <- combined_mapping[common_cells, , drop = FALSE]
+
+# Add the MapMyCells annotations to the original Seurat object
+neuron_obj <- AddMetaData(neuron_obj, metadata = combined_mapping)
+
+# Verify metadata integration
+cat("Neuron Object Metadata:\n")
+head(neuron_obj@meta.data)
+
+# Visualize UMAP with new annotations
+DimPlot(neuron_obj, reduction = "umap", group.by = "class_name", label = TRUE)
+DimPlot(neuron_obj, reduction = "umap", group.by = "subclass_name", label = TRUE)
+```
+
+## 7. Add Module Scores
+
+```{r}
+excitatory_list <- list(c("SLC17A6", "SLC17A7", "SLC17A8", "GRIA1", "GRIA2", "GRIA3", "GRIA4", 
+                          "GRIN1", "GRIN2A", "GRIN2B", "GRIN2C", "GRIN2D", "GRIN3A", "GRIN3B", 
+                          "GRM1", "GRM2", "GRM3", "GRM4", "GRM5", "GRM6", "GRM7", "GRM8", 
+                          "TBR1", "FEZF2", "NEUROD1", "CTIP2", "SATB2", "CAMK2A", "CAMK2B", 
+                          "NRGN", "SYT1", "PSD95", "DLG4", "SHANK1", "SHANK2", "SHANK3", 
+                          "HOMER1", "HOMER2", "HOMER3", "VAMP1", "VAMP2"))
+
+inhibitory_list <- list(c("GAD1", "GAD2", "SLC32A1", "SLC6A1", "GABRA1", "GABRA2", "GABRA3", 
+                          "GABRA4", "GABRA5", "GABRA6", "GABRB1", "GABRB2", "GABRB3", 
+                          "GABRG1", "GABRG2", "GABRG3", "GABBR1", "GABBR2", "DLX1", "DLX2", 
+                          "DLX5", "DLX6", "ARX", "LHX6", "SST", "PVALB", "CALB1", "CALB2", 
+                          "VIP", "CR", "NPY", "GPHN", "NKCC1", "SLC12A2", "KCC2", "SLC12A5"))
+
+neuron_obj <- AddModuleScore(neuron_obj, features = excitatory_list, 
+                             name = "Excitatory_Profile", nbin = 24)
+
+neuron_obj <- AddModuleScore(neuron_obj, features = inhibitory_list, 
+                             name = "Inhibitory_Profile", nbin = 24)
+
+cat("Module scores calculated\n")
+```
+
+## 8. Save Corrected Neuron-Only Object
+
+```{r}
+# Save the fully annotated neuron-only object
+output_path <- "D:/Youssef Sibih/Seurat_Objects/mainobj_metadata_corrected_neurons_only.rds"
+saveRDS(neuron_obj, file = output_path)
+
+cat("\n=== Object Saved ===\n")
+cat("Saved to:", output_path, "\n")
+cat("Total neurons:", ncol(neuron_obj), "\n\n")
+
+cat("Annotations present:\n")
+cat("  ✓ manual_annot\n")
+cat("  ✓ default_ident\n")
+cat("  ✓ cortex_type\n")
+cat("  ✓ one_over_f_status (corrected)\n")
+cat("  ✓ MapMyCells (class_name, subclass_name)\n")
+cat("  ✓ Module scores (Excitatory_Profile1, Inhibitory_Profile1)\n")
+```
+
+
+

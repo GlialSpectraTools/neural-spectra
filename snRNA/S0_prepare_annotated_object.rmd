@@ -1,0 +1,280 @@
+---
+title: "S0: Prepare Annotated Seurat Object"
+output: html_notebook
+---
+
+This script prepares the cleaned, annotated Seurat object with:
+- Corrected 1/f status
+- Manual cell type annotations
+- MapMyCells neuron annotations
+- Patient metadata
+
+## Setup
+
+```{r setup}
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+```
+
+## 1. Load Raw Seurat Object
+
+```{r load_object}
+# Load the original Seurat object
+obj <- readRDS("D:/Youssef Sibih/Seurat_Objects/oneoverf_combined_submap_cells_snc_sct_complete.rds")
+
+# Quick view
+print(paste("Total cells:", ncol(obj)))
+DimPlot(obj, label = TRUE)
+```
+
+## 2. Fix 1/f Status Corrections
+
+The original 1/f status assignments were incorrect for some samples. We need to fix:
+- SF490_8 and SF495_6 should be high1overf (currently low1overf)
+- SF490_3 and SF495_1 should be low1overf (currently high1overf)
+
+```{r fix_1overf_status}
+# Fix samples that should be high1overf
+cells_to_update1 <- WhichCells(obj, 
+                               expression = exp == "SF490_8" & one_over_f_status == "low1overf")
+obj@meta.data[cells_to_update1, "one_over_f_status"] <- "high1overf"
+print(paste("Fixed SF490_8:", length(cells_to_update1), "cells -> high1overf"))
+
+cells_to_update2 <- WhichCells(obj, 
+                               expression = exp == "SF495_6" & one_over_f_status == "low1overf")
+obj@meta.data[cells_to_update2, "one_over_f_status"] <- "high1overf"
+print(paste("Fixed SF495_6:", length(cells_to_update2), "cells -> high1overf"))
+
+# Fix samples that should be low1overf
+cells_to_update3 <- WhichCells(obj, 
+                               expression = exp == "SF490_3" & one_over_f_status == "high1overf")
+obj@meta.data[cells_to_update3, "one_over_f_status"] <- "low1overf"
+print(paste("Fixed SF490_3:", length(cells_to_update3), "cells -> low1overf"))
+
+cells_to_update4 <- WhichCells(obj, 
+                               expression = exp == "SF495_1" & one_over_f_status == "high1overf")
+obj@meta.data[cells_to_update4, "one_over_f_status"] <- "low1overf"
+print(paste("Fixed SF495_1:", length(cells_to_update4), "cells -> low1overf"))
+
+# Verify the fix
+table(obj@meta.data$exp, obj@meta.data$one_over_f_status)
+```
+
+## 3. Add Manual Cell Type Annotations
+
+Apply cluster annotations to assign cell types.
+
+```{r manual_annotations}
+# Store default cluster identities
+obj@meta.data$default_ident <- Idents(obj)
+
+# Define cluster to cell type mapping
+cluster_ids <- c(
+  "0" = "Tumor",
+  "1" = "Oligodendrocyte",
+  "2" = "Endothelial",
+  "3" = "Oligodendrocyte",
+  "4" = "Astrocyte",
+  "5" = "Oligodendrocyte",
+  "6" = "Neurons",
+  "7" = "Myeloid/microglial",
+  "8" = "Astrocyte",
+  "9" = "Tumor",
+  "10" = "Neurons",
+  "11" = "Neurons",
+  "12" = "Tumor",
+  "13" = "Neurons",
+  "14" = "Neurons",
+  "15" = "Neurons",
+  "16" = "Neurons",
+  "17" = "Neurons",
+  "18" = "Oligodendrocyte",
+  "19" = "Tumor",
+  "20" = "Oligodendrocyte",
+  "21" = "Mesenchymal",
+  "22" = "Erythroid",
+  "23" = "Oligodendrocyte",
+  "24" = "Neurons",
+  "25" = "Tumor",
+  "26" = "Myeloid",
+  "27" = "Neurons",
+  "28" = "Tumor",
+  "29" = "Oligodendrocyte",
+  "30" = "Tumor",
+  "31" = "Neurons",
+  "32" = "Neurons",
+  "33" = "Astrocyte",
+  "34" = "Tumor"
+)
+
+# Apply annotations
+names(cluster_ids) <- levels(obj)
+obj <- RenameIdents(obj, cluster_ids)
+
+# Store in manual_anot column
+obj$manual_anot <- Idents(obj)
+
+# Verify annotations
+print("Cell type counts:")
+table(obj$manual_anot)
+
+DimPlot(obj, label = TRUE) + ggtitle("Cell Type Annotations")
+```
+
+## 4. Add Cortex Type Metadata
+
+```{r cortex_type}
+# Initialize cortex_type with glioma_subtype values
+obj@meta.data$cortex_type <- obj@meta.data$glioma_subtype
+
+# Set Normal Cortex for control samples
+obj@meta.data$cortex_type[obj@meta.data$exp %in% c("SF524_3", "SF524_1")] <- "Normal Cortex"
+
+# Verify
+print("Cortex type distribution:")
+table(obj@meta.data$cortex_type)
+```
+
+## 5. Integrate MapMyCells Annotations
+
+Add MapMyCells neuron subtype annotations (class_name and subclass_name) to the full object.
+These will be NA for non-neurons.
+
+```{r mapmycells_annotations}
+# Define mapping files for Neurons groups
+mapping_files <- list(
+  neurons_1 = "C:/YS_Backup/Neurons_1_MTG/neurons_anndata_group1.csv",
+  neurons_2 = "C:/YS_Backup/Neurons_2_MTG/neurons_anndata_group2.csv"
+)
+
+# Load and combine both annotations
+all_mappings <- lapply(mapping_files, function(file) {
+  mapping <- read.csv(file, comment.char = "#")
+  rownames(mapping) <- mapping$cell_id
+  return(mapping[, c("class_name", "subclass_name"), drop = FALSE])
+})
+
+# Merge both neuron group mappings
+combined_mapping <- bind_rows(all_mappings)
+
+# Find cells that exist in both the object and the mapping
+common_cells <- intersect(rownames(obj@meta.data), rownames(combined_mapping))
+print(paste("Neurons with MapMyCells annotations:", length(common_cells)))
+
+# Initialize columns with NA for all cells
+obj@meta.data$class_name <- NA
+obj@meta.data$subclass_name <- NA
+
+# Add annotations only for matching cells (neurons)
+obj@meta.data[common_cells, "class_name"] <- combined_mapping[common_cells, "class_name"]
+obj@meta.data[common_cells, "subclass_name"] <- combined_mapping[common_cells, "subclass_name"]
+
+# Verify
+print("Class name distribution (including NA for non-neurons):")
+table(obj@meta.data$class_name, useNA = "ifany")
+
+print("Subclass name distribution:")
+table(obj@meta.data$subclass_name, useNA = "ifany")
+```
+
+## 6. Create Refined Annotations
+
+Create `refined_annot` that combines manual annotations with MapMyCells neuron subtypes:
+- Tumor cells keep "Tumor" designation
+- Neurons with valid MapMyCells annotations (Glutamatergic or GABAergic) get their subclass_name
+- All other cells keep their manual_anot
+
+```{r refined_annotations}
+# Start with manual_anot as base
+obj@meta.data$refined_annot <- as.character(obj@meta.data$manual_anot)
+
+# For neurons with valid neuronal MapMyCells annotations, use subclass_name
+# Valid neuronal classes are "Neuronal: Glutamatergic" and "Neuronal: GABAergic"
+valid_neuronal_classes <- c("Neuronal: Glutamatergic", "Neuronal: GABAergic")
+
+# Find cells that are neurons AND have valid neuronal MapMyCells class
+neurons_with_valid_mmc <- which(
+  obj@meta.data$manual_anot == "Neurons" & 
+  obj@meta.data$class_name %in% valid_neuronal_classes &
+  !is.na(obj@meta.data$subclass_name)
+)
+
+# Update refined_annot for these cells with their subclass_name
+obj@meta.data$refined_annot[neurons_with_valid_mmc] <- obj@meta.data$subclass_name[neurons_with_valid_mmc]
+
+# Verify the results
+print("Refined annotation distribution:")
+print(table(obj@meta.data$refined_annot, useNA = "ifany"))
+
+# Check that Tumor is preserved
+print(paste("\nTumor cells in refined_annot:", sum(obj@meta.data$refined_annot == "Tumor")))
+print(paste("Tumor cells in manual_anot:", sum(obj@meta.data$manual_anot == "Tumor")))
+
+# Check neurons breakdown
+print("\nNeurons breakdown:")
+print(paste("  - Original 'Neurons' in manual_anot:", sum(obj@meta.data$manual_anot == "Neurons")))
+print(paste("  - Neurons with valid MapMyCells subclass:", length(neurons_with_valid_mmc)))
+print(paste("  - Neurons remaining as 'Neurons' in refined_annot:", sum(obj@meta.data$refined_annot == "Neurons")))
+```
+
+## 7. Add Patient Metadata
+
+Extract patient ID from sample names (e.g., SF490_8 -> SF490).
+
+```{r patient_metadata}
+# Extract patient ID from exp field
+obj@meta.data$patient_id <- gsub("_\\d+$", "", obj@meta.data$exp)
+
+# Verify
+print("Patient ID distribution:")
+table(obj@meta.data$patient_id)
+
+# Show sample to patient mapping
+sample_patient_mapping <- unique(obj@meta.data[, c("exp", "patient_id", "one_over_f_status")])
+sample_patient_mapping <- sample_patient_mapping[order(sample_patient_mapping$patient_id, 
+                                                        sample_patient_mapping$one_over_f_status), ]
+print("Sample to Patient mapping:")
+print(sample_patient_mapping)
+```
+
+## 8. Final Verification
+
+```{r final_verification}
+# Summary of metadata columns
+print("Metadata columns:")
+print(colnames(obj@meta.data))
+
+# Summary counts
+print("Summary:")
+print(paste("Total cells:", ncol(obj)))
+print(paste("Samples:", length(unique(obj@meta.data$exp))))
+print(paste("Patients:", length(unique(obj@meta.data$patient_id))))
+print(paste("High 1/f cells:", sum(obj@meta.data$one_over_f_status == "high1overf")))
+print(paste("Low 1/f cells:", sum(obj@meta.data$one_over_f_status == "low1overf")))
+print(paste("Neurons with subclass annotations:", sum(!is.na(obj@meta.data$subclass_name))))
+
+# View sample of metadata
+head(obj@meta.data[, c("exp", "patient_id", "one_over_f_status", "manual_anot", "refined_annot", "class_name", "subclass_name", "cortex_type")])
+```
+
+## 9. Save Processed Object
+
+Save the fully annotated object to Box.
+
+```{r save_object}
+# Define output path - update this to your Box sync folder location
+output_path <- "D:/Youssef Sibih/Seurat_Objects/oneoverf_combined_corrected_annotations.rds"
+
+# Save the object
+saveRDS(obj, file = output_path)
+
+print(paste("Object saved to:", output_path))
+print(paste("File size:", round(file.info(output_path)$size / 1e9, 2), "GB"))
+```
+
+## Session Info
+
+```{r session_info}
+sessionInfo()
+```

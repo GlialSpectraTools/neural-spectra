@@ -1,0 +1,230 @@
+---
+title: "S4: Sample-Level PCA of Transcriptomes"
+output: html_notebook
+---
+
+This script performs sample-level PCA on pseudobulk transcriptomes to assess whether gene expression profiles segregate by:
+- 1/f exponent (flat vs steep)
+- Cortex type (Normal Cortex, GBM, Oligodendroglioma, Astrocytoma)
+
+## Setup
+
+```{r setup}
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(ggrepel)
+library(DESeq2)
+```
+
+## 1. Load Annotated Object
+
+```{r load_object}
+obj <- readRDS("D:/Youssef Sibih/Seurat_Objects/oneoverf_combined_corrected_annotations.rds")
+
+# Create output directory if needed
+output_dir <- "plots"
+if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+print(paste("Total cells:", ncol(obj)))
+print("Samples (exp):")
+print(unique(obj@meta.data$exp))
+```
+
+## 2. Pseudobulk Aggregation
+
+Aggregate raw counts per sample (one expression profile per sample).
+
+```{r pseudobulk}
+# Sum counts per gene per sample; returns matrix genes x samples
+pb_counts <- Seurat::AggregateExpression(
+  obj,
+  group.by = "exp",
+  assays = "RNA",
+  slot = "counts",
+  return.seurat = FALSE
+)[["RNA"]]
+
+# Ensure we have counts (not SCT)
+# If RNA counts are empty, try "SCT" with slot "counts" as fallback
+if (length(pb_counts) == 0 || all(pb_counts == 0)) {
+  pb_counts <- Seurat::AggregateExpression(
+    obj,
+    group.by = "exp",
+    assays = "SCT",
+    slot = "counts",
+    return.seurat = FALSE
+  )[["SCT"]]
+}
+
+print("Pseudobulk matrix dimensions (genes x samples):")
+print(dim(pb_counts))
+print("Sample columns:")
+print(colnames(pb_counts))
+```
+
+## 3. Variance-Stabilizing Transform (DESeq2)
+
+Normalize pseudobulk counts with VST for PCA.
+
+```{r vst}
+# Sample-level metadata for DESeq2 (required for colData)
+sample_ids <- colnames(pb_counts)
+sample_meta <- data.frame(
+  sample = sample_ids,
+  row.names = sample_ids
+)
+
+# Build DESeqDataSet with intercept-only design (for normalization only)
+dds <- DESeqDataSetFromMatrix(
+  countData = pb_counts,
+  colData = sample_meta,
+  design = ~ 1
+)
+
+# Filter low-count genes to avoid VST issues
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep, ]
+
+# Variance-stabilizing transformation
+vst_mat <- assay(varianceStabilizingTransformation(dds))
+
+print("VST matrix dimensions (genes x samples):")
+print(dim(vst_mat))
+```
+
+## 4. Run PCA
+
+```{r pca}
+# PCA: samples as rows, genes as columns; center and scale
+pca_res <- prcomp(t(vst_mat), center = TRUE, scale. = TRUE)
+
+# Variance explained by first 5 PCs
+var_explained <- summary(pca_res)$importance[2, ]
+print("Variance explained (first 5 PCs):")
+print(round(var_explained[1:5], 4))
+```
+
+## 5. Sample-Level Metadata for Plotting
+
+```{r sample_metadata}
+# One row per sample: exp, one_over_f_status, cortex_type
+meta_cell <- obj@meta.data
+sample_meta_plot <- meta_cell %>%
+  distinct(exp, .keep_all = TRUE) %>%
+  select(exp, one_over_f_status, cortex_type) %>%
+  mutate(
+    oneoverf_label = case_when(
+      one_over_f_status == "high1overf" ~ "Steep (high 1/f)",
+      one_over_f_status == "low1overf"  ~ "Flat (low 1/f)",
+      TRUE ~ as.character(one_over_f_status)
+    )
+  )
+
+# Align with PCA rownames (sample order)
+# AggregateExpression converts underscores to hyphens; revert to match metadata
+sample_order <- gsub("^RNA\\.|^SCT\\.", "", rownames(pca_res$x))
+sample_order <- gsub("-", "_", sample_order)
+rownames(pca_res$x) <- sample_order
+sample_meta_plot <- sample_meta_plot[match(sample_order, sample_meta_plot$exp), ]
+sample_meta_plot$sample <- sample_meta_plot$exp
+
+# Combine PCA coordinates with metadata
+pca_df <- as.data.frame(pca_res$x[, 1:2])
+pca_df$sample <- rownames(pca_df)
+pca_df <- left_join(pca_df, sample_meta_plot, by = "sample")
+
+# Percent variance for axis labels
+pct1 <- round(100 * var_explained["PC1"], 1)
+pct2 <- round(100 * var_explained["PC2"], 1)
+```
+
+## 6. Plot 1: PCA Colored by 1/f Status (Flat vs Steep)
+
+```{r plot_oneoverf}
+# Base plot (shared layers)
+p1_base <- ggplot(pca_df, aes(x = PC1, y = PC2, color = oneoverf_label)) +
+  geom_point(size = 4) +
+  scale_color_manual(values = c("Flat (low 1/f)" = "#19bdc1", "Steep (high 1/f)" = "#f5746f")) +
+  labs(
+    x = "PC1",
+    y = "PC2",
+    color = "1/f status",
+    title = "Sample-level PCA: transcriptomes by 1/f exponent"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "right")
+
+# With sample labels
+p1_labeled <- p1_base +
+  geom_text_repel(aes(label = sample), size = 3.5, max.overlaps = 20)
+
+# Without sample labels
+p1_nolabel <- p1_base
+
+print(p1_labeled)
+print(p1_nolabel)
+```
+
+## 7. Plot 2: PCA Colored by Cortex Type
+
+```{r plot_cortex_type}
+# Friendly cortex type labels
+pca_df <- pca_df %>%
+  mutate(cortex_label = case_when(
+    cortex_type == "Normal Cortex"     ~ "Normal Cortex",
+    cortex_type == "glioblastoma"      ~ "GBM",
+    cortex_type == "oligodendroglioma"  ~ "Oligodendroglioma",
+    cortex_type == "astrocytoma"        ~ "Astrocytoma",
+    TRUE ~ as.character(cortex_type)
+  ))
+
+p2_base <- ggplot(pca_df, aes(x = PC1, y = PC2, color = cortex_label)) +
+  geom_point(size = 4) +
+  scale_color_manual(
+    values = c(
+      "Normal Cortex"     = "#658ec7",
+      "GBM"               = "#01a99d",
+      "Oligodendroglioma" = "#000000",
+      "Astrocytoma"       = "#e91f8c"
+    )
+  ) +
+  labs(
+    x = "PC1",
+    y = "PC2",
+    color = "Cortex type",
+    title = "Sample-level PCA: transcriptomes by cortex type"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "right")
+
+# With sample labels
+p2_labeled <- p2_base +
+  geom_text_repel(aes(label = sample), size = 3.5, max.overlaps = 20)
+
+# Without sample labels
+p2_nolabel <- p2_base
+
+print(p2_labeled)
+print(p2_nolabel)
+```
+
+## 8. Save Plots to PDF
+
+```{r save_plots}
+# With labels
+ggsave(file.path(output_dir, "S4_PCA_by_oneoverf_status_labeled.pdf"), p1_labeled, width = 7, height = 5)
+ggsave(file.path(output_dir, "S4_PCA_by_cortex_type_labeled.pdf"), p2_labeled, width = 7, height = 5)
+
+# Without labels
+ggsave(file.path(output_dir, "S4_PCA_by_oneoverf_status_nolabel.pdf"), p1_nolabel, width = 7, height = 5)
+ggsave(file.path(output_dir, "S4_PCA_by_cortex_type_nolabel.pdf"), p2_nolabel, width = 7, height = 5)
+
+print(paste("Plots saved to", output_dir))
+```
+
+## Session Info
+
+```{r session_info}
+sessionInfo()
+```

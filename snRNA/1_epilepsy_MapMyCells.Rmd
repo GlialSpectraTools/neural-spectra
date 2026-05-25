@@ -1,0 +1,208 @@
+---
+title: "Epilepsy MapMyCells Annotation"
+output: html_notebook
+---
+
+This script prepares the epilepsy Seurat object for MapMyCells annotation. Since no annotations are currently present in the object, we will process all cells and let MapMyCells identify neurons.
+
+## 1. Load Libraries
+
+```{r}
+# Load Packages
+library(Seurat)
+library(rliger)
+library(scCustomize)
+library(qs)
+library(anndata)
+library(reticulate)
+library(dplyr)
+library(ggplot2)
+
+# Install Python anndata module
+reticulate::py_install("anndata")
+```
+
+## 2. Load and Inspect Epilepsy Object
+
+```{r}
+# Load the epilepsy Seurat object
+obj_path <- "D:/Youssef Sibih/Seurat_Objects/R1_123125/epilepsy_4samples_combined_sct.rds"
+obj <- readRDS(obj_path)
+
+# Basic object information
+cat("Object loaded successfully!\n")
+cat("Total cells:", ncol(obj), "\n")
+cat("Total genes:", nrow(obj), "\n\n")
+
+# Check Seurat version
+cat("Seurat version:", as.character(packageVersion("Seurat")), "\n")
+cat("Object class:", paste(class(obj), collapse = ", "), "\n\n")
+
+# List available assays
+cat("Available assays:", names(obj@assays), "\n")
+cat("Default assay:", DefaultAssay(obj), "\n\n")
+
+# Check active identities
+cat("Active identities (Idents):\n")
+print(table(Idents(obj)))
+cat("\nNote: No annotations present - processing all cells\n\n")
+
+# List metadata columns
+cat("Available metadata columns:\n")
+print(colnames(obj@meta.data))
+cat("\n")
+
+# Check for seurat_clusters or other grouping variables
+if ("seurat_clusters" %in% colnames(obj@meta.data)) {
+  cat("seurat_clusters found:\n")
+  print(table(obj@meta.data$seurat_clusters))
+  cat("\n")
+} else {
+  cat("seurat_clusters not found in metadata\n\n")
+}
+
+# Check if UMAP or other reductions are available
+cat("Available reductions:", names(obj@reductions), "\n\n")
+
+# Display basic visualization if UMAP exists
+if ("umap" %in% names(obj@reductions)) {
+  DimPlot(obj, reduction = "umap", label = TRUE) + 
+    ggtitle("Epilepsy Object - All Cells (No Annotations)")
+} else if (length(obj@reductions) > 0) {
+  # Use first available reduction
+  reduction_name <- names(obj@reductions)[1]
+  DimPlot(obj, reduction = reduction_name, label = TRUE) + 
+    ggtitle(paste("Epilepsy Object - All Cells (", reduction_name, ")", sep = ""))
+}
+```
+
+## 3. Convert All Cells to h5ad Format for MapMyCells
+
+Since there are no annotations in the object, we will process all cells. MapMyCells will identify and annotate neurons from all cells.
+
+```{r}
+# Set default assay to RNA (required for MapMyCells)
+DefaultAssay(obj) <- "RNA"
+
+# Check if object uses v5 layers (needs JoinLayers) or v3 (no layers)
+# Try to join layers - will work if v5, will error if v3
+tryCatch({
+  obj_joined <- JoinLayers(obj, assay = "RNA")
+  cat("Successfully joined layers (v5 Seurat object)\n")
+  use_joined <- TRUE
+}, error = function(e) {
+  cat("JoinLayers not needed or failed (likely v3 Seurat object):", e$message, "\n")
+  cat("Using object as-is\n")
+  use_joined <- FALSE
+})
+
+# Use joined object if available, otherwise use original
+if (exists("obj_joined") && use_joined) {
+  obj_for_conversion <- obj_joined
+} else {
+  obj_for_conversion <- obj
+}
+
+# Check object size to determine if splitting is needed
+cell_count <- ncol(obj_for_conversion)
+cat("\nTotal cells to convert:", cell_count, "\n")
+
+# Define output directory (MapMyCells_Input subdirectory in R1_123125)
+output_dir <- file.path(dirname(obj_path), "MapMyCells_Input")
+# Create directory if it doesn't exist
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+  cat("Created output directory:", output_dir, "\n")
+}
+cat("Output directory:", output_dir, "\n\n")
+
+# Determine if splitting is needed
+# MapMyCells can handle large files, but if >100k cells, consider splitting
+SPLIT_THRESHOLD <- 100000  # Adjust based on your system's capabilities
+
+if (cell_count > SPLIT_THRESHOLD && "seurat_clusters" %in% colnames(obj_for_conversion@meta.data)) {
+  cat("Object is large (", cell_count, " cells). Splitting into groups...\n\n")
+  
+  # Ensure seurat_clusters is character
+  obj_for_conversion$seurat_clusters <- as.character(obj_for_conversion$seurat_clusters)
+  
+  # Get unique clusters
+  unique_clusters <- unique(obj_for_conversion$seurat_clusters)
+  cat("Found", length(unique_clusters), "clusters\n")
+  
+  # Split into two groups (adjust logic as needed)
+  # Simple approach: split clusters roughly in half
+  mid_point <- ceiling(length(unique_clusters) / 2)
+  group1_clusters <- unique_clusters[1:mid_point]
+  group2_clusters <- unique_clusters[(mid_point + 1):length(unique_clusters)]
+  
+  cat("Group 1 clusters:", paste(group1_clusters, collapse = ", "), "\n")
+  cat("Group 2 clusters:", paste(group2_clusters, collapse = ", "), "\n\n")
+  
+  # Subset Group 1
+  obj_group1 <- subset(obj_for_conversion, seurat_clusters %in% group1_clusters)
+  cat("Group 1 cells:", ncol(obj_group1), "\n")
+  
+  # Subset Group 2
+  obj_group2 <- subset(obj_for_conversion, seurat_clusters %in% group2_clusters)
+  cat("Group 2 cells:", ncol(obj_group2), "\n\n")
+  
+  # Convert Group 1 to h5ad
+  cat("Converting Group 1 to h5ad format...\n")
+  as.anndata(
+    x = obj_group1, 
+    file_path = output_dir, 
+    file_name = "epilepsy_anndata_group1.h5ad"
+  )
+  cat("Saved: epilepsy_anndata_group1.h5ad\n\n")
+  
+  # Convert Group 2 to h5ad
+  cat("Converting Group 2 to h5ad format...\n")
+  as.anndata(
+    x = obj_group2, 
+    file_path = output_dir, 
+    file_name = "epilepsy_anndata_group2.h5ad"
+  )
+  cat("Saved: epilepsy_anndata_group2.h5ad\n\n")
+  
+  cat("Conversion complete! Two files created for MapMyCells processing.\n")
+  
+} else {
+  # Single file conversion
+  cat("Converting all cells to single h5ad file...\n")
+  
+  as.anndata(
+    x = obj_for_conversion, 
+    file_path = output_dir, 
+    file_name = "epilepsy_4samples_combined_anndata.h5ad"
+  )
+  
+  cat("Saved: epilepsy_4samples_combined_anndata.h5ad\n")
+  cat("Conversion complete! File ready for MapMyCells processing.\n")
+}
+```
+
+## 4. Summary
+
+```{r}
+cat("=== Conversion Summary ===\n")
+cat("Input object:", basename(obj_path), "\n")
+cat("Total cells processed:", ncol(obj), "\n")
+cat("Output directory:", output_dir, "\n")
+
+if (cell_count > SPLIT_THRESHOLD && "seurat_clusters" %in% colnames(obj_for_conversion@meta.data)) {
+  cat("Files created:\n")
+  cat("  - epilepsy_anndata_group1.h5ad\n")
+  cat("  - epilepsy_anndata_group2.h5ad\n")
+} else {
+  cat("File created:\n")
+  cat("  - epilepsy_4samples_combined_anndata.h5ad\n")
+}
+
+cat("\nNext steps:\n")
+cat("1. Open the h5ad file(s) in MapMyCells GUI\n")
+cat("2. Use MTG atlas to annotate neurons\n")
+cat("3. Export annotations as CSV\n")
+cat("4. Use the next script to import annotations back to Seurat object\n")
+```
+

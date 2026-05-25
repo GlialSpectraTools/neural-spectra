@@ -1,0 +1,417 @@
+---
+title: "Epilepsy MapMyCells Plots and Analysis"
+output: html_notebook
+---
+
+This script loads MapMyCells annotations, integrates them into the epilepsy Seurat object, generates plots, and exports analysis data.
+
+## 1. Load Libraries
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(ggpattern)
+library(scales)
+library(ggpubr)
+library(RColorBrewer)
+library(patchwork)
+```
+
+## 2. Load Seurat Object and MapMyCells Annotations
+
+```{r}
+# Load the epilepsy Seurat object
+obj_path <- "D:/Youssef Sibih/Seurat_Objects/R1_123125/epilepsy_4samples_combined_sct.rds"
+obj <- readRDS(obj_path)
+
+cat("Object loaded successfully!\n")
+cat("Total cells:", ncol(obj), "\n\n")
+
+# Define mapping files for the two groups
+mapping_files <- list(
+  group1 = "D:/Youssef Sibih/Seurat_Objects/R1_123125/MapMyCells_Input/epilepsy_anndata_group1_10xHumanMTGSEA/epilepsy_anndata_group1_10xHumanMTGSEA-AD(CCN20230505)_SEA-ADHierarchicalMapping_UTC_1767498963499.csv",
+  group2 = "D:/Youssef Sibih/Seurat_Objects/R1_123125/MapMyCells_Input/epilepsy_anndata_group2_10xHumanMTGSEA/epilepsy_anndata_group2_10xHumanMTGSEA-AD(CCN20230505)_SEA-ADHierarchicalMapping_UTC_1767501091103.csv"
+)
+
+# Load and combine both annotations
+all_mappings <- lapply(mapping_files, function(file) {
+  mapping <- read.csv(file, comment.char = "#")
+  rownames(mapping) <- mapping$cell_id  # Ensure rownames are set
+  return(mapping[, c("class_name", "subclass_name")])  # Keep only relevant columns
+})
+
+# Merge both group mappings
+combined_mapping <- bind_rows(all_mappings)
+
+# Ensure only matching cell IDs are used
+common_cells <- intersect(rownames(obj@meta.data), rownames(combined_mapping))
+cat("Found", length(common_cells), "cells with MapMyCells annotations\n")
+
+# Subset combined mapping to include only cells in object
+combined_mapping <- combined_mapping[common_cells, , drop = FALSE]
+
+# Add the MapMyCells annotations to the original Seurat object
+obj <- AddMetaData(obj, metadata = combined_mapping)
+
+# Verify metadata integration
+cat("MapMyCells annotations added to object\n")
+cat("Unique class names:", paste(unique(obj@meta.data$class_name[!is.na(obj@meta.data$class_name)]), collapse = ", "), "\n\n")
+
+# Visualize UMAP with new annotations (all cells)
+DimPlot(obj, reduction = "umap", group.by = "class_name", label = TRUE) + 
+  ggtitle("All Cells - MapMyCells Class")
+```
+
+## 3. Create Neuron Subset
+
+```{r}
+# Filter to neuronal cells only (Glutamatergic and GABAergic)
+neuron_obj_cleaned <- subset(x = obj, subset = class_name %in% c("Neuronal: Glutamatergic", "Neuronal: GABAergic"))
+
+cat("Neuron subset created\n")
+cat("Total neurons:", ncol(neuron_obj_cleaned), "\n")
+cat("Neuron subtypes:\n")
+print(table(neuron_obj_cleaned@meta.data$subclass_name))
+```
+
+## 4. Define Color Schemes
+
+```{r}
+# Define the color mapping for each cell type
+my_colors <- c(
+  "Neuronal: Glutamatergic" = "orange",
+  "Neuronal: GABAergic"     = "lightblue"
+)
+
+my_colors_2 <- c(
+  "L2/3 IT"    = "#FEC89A",
+  "L4 IT"      = "#FCD5CE",
+  "L5 IT"      = "#FFDAB9",
+  "L6 IT"      = "#F49595",
+  "L6 IT Car3" = "#F1CEBE",
+  "L5 ET"      = "#F3D17C",
+  "L6 CT"      = "#FCEFB4",
+  "L5/6 NP"    = "#F9ED85",
+  "L6b"        = "#FFCAE9",
+  "Chandelier" = "#A9E4DE",
+  "Sst Chodl"  = "#83B8C6",
+  "Lamp5"      = "#D0E444",    
+  "Lamp5 Lhx6" = "#D0EDEF",
+  "Pax6"       = "#E1D3F8",
+  "Vip"        = "#B0B5ED", 
+  "Sncg"       = "#D6DFE8",
+  "Pvalb"      = "#8FC0E3",    
+  "Sst"        = "#7FB3D5"    
+)
+```
+
+## 5. Add Module Scores
+
+```{r}
+# Define excitatory and inhibitory gene lists
+excitatory_list <- list(c("SLC17A6", "SLC17A7", "SLC17A8", "GRIA1", "GRIA2", "GRIA3", "GRIA4", 
+                          "GRIN1", "GRIN2A", "GRIN2B", "GRIN2C", "GRIN2D", "GRIN3A", "GRIN3B", 
+                          "GRM1", "GRM2", "GRM3", "GRM4", "GRM5", "GRM6", "GRM7", "GRM8", 
+                          "TBR1", "FEZF2", "NEUROD1", "CTIP2", "SATB2", "CAMK2A", "CAMK2B", 
+                          "NRGN", "SYT1", "PSD95", "DLG4", "SHANK1", "SHANK2", "SHANK3", 
+                          "HOMER1", "HOMER2", "HOMER3", "VAMP1", "VAMP2"))
+
+inhibitory_list <- list(c("GAD1", "GAD2", "SLC32A1", "SLC6A1", "GABRA1", "GABRA2", "GABRA3", 
+                          "GABRA4", "GABRA5", "GABRA6", "GABRB1", "GABRB2", "GABRB3", 
+                          "GABRG1", "GABRG2", "GABRG3", "GABBR1", "GABBR2", "DLX1", "DLX2", 
+                          "DLX5", "DLX6", "ARX", "LHX6", "SST", "PVALB", "CALB1", "CALB2", 
+                          "VIP", "CR", "NPY", "GPHN", "NKCC1", "SLC12A2", "KCC2", "SLC12A5"))
+
+# Add module scores
+neuron_obj_cleaned <- AddModuleScore(neuron_obj_cleaned, features = excitatory_list, 
+                                     name = "Excitatory_Profile", nbin = 24)
+
+neuron_obj_cleaned <- AddModuleScore(neuron_obj_cleaned, features = inhibitory_list, 
+                                     name = "Inhibitory_Profile", nbin = 24)
+
+cat("Module scores calculated\n")
+```
+
+## 6. Generate UMAP Plots
+
+```{r}
+# Create output directory for plots in the oneoverf_R1_10326 folder
+plot_dir <- "D:/AbrahamDada/oneoverf/oneoverf_R1_10326/plots"
+if (!dir.exists(plot_dir)) {
+  dir.create(plot_dir, recursive = TRUE)
+}
+
+# Plot 1: All cells - with labels
+p1 <- DimPlot(obj, reduction = "umap", group.by = "subclass_name", 
+              label = TRUE, repel = TRUE) + 
+  NoAxes() +
+  theme(legend.position = "right")
+
+ggsave(filename = "epilepsy_allcells_labeled.pdf", 
+       plot = p1, 
+       path = plot_dir, 
+       width = 9, height = 4, 
+       device = "pdf", dpi = 600)
+
+p1
+
+# Plot 2: All cells - without labels
+p2 <- DimPlot(obj, reduction = "umap", group.by = "subclass_name", 
+              label = FALSE) + 
+  NoAxes() +
+  NoLegend()
+
+ggsave(filename = "epilepsy_allcells_unlabeled.pdf", 
+       plot = p2, 
+       path = plot_dir, 
+       width = 5.5, height = 3.6, 
+       device = "pdf", dpi = 600)
+
+p2
+
+# Ensure subclass_name is a factor with sorted levels for legend (neuron subset)
+neuron_obj_cleaned$subclass_name <- factor(neuron_obj_cleaned$subclass_name, 
+                                           levels = sort(unique(neuron_obj_cleaned$subclass_name)))
+
+# Plot 3: Neuron only - with labels
+p3 <- DimPlot(neuron_obj_cleaned, reduction = "umap", group.by = "subclass_name", 
+              cols = my_colors_2, label = TRUE, repel = TRUE) + 
+  NoAxes() +
+  theme(legend.position = "right")
+
+ggsave(filename = "epilepsy_neurononly_labeled.pdf", 
+       plot = p3, 
+       path = plot_dir, 
+       width = 9, height = 4, 
+       device = "pdf", dpi = 600)
+
+p3
+
+# Plot 4: Neuron only - without labels
+p4 <- DimPlot(neuron_obj_cleaned, reduction = "umap", group.by = "subclass_name", 
+              cols = my_colors_2, label = FALSE) + 
+  NoAxes() +
+  NoLegend()
+
+ggsave(filename = "epilepsy_neurononly_nolabel.pdf", 
+       plot = p4, 
+       path = plot_dir, 
+       width = 5.5, height = 3.6, 
+       device = "pdf", dpi = 600)
+
+p4
+
+# Check if one_over_f_status exists before plotting
+if ("one_over_f_status" %in% colnames(neuron_obj_cleaned@meta.data)) {
+  # Plot 5: Neuron only - colored by 1/f status with labels
+  p5 <- DimPlot(neuron_obj_cleaned, reduction = "umap", group.by = "one_over_f_status", 
+                label = TRUE, repel = TRUE) + 
+    NoAxes() +
+    theme(legend.position = "right")
+  
+  ggsave(filename = "epilepsy_neurononly_1overf_labeled.pdf", 
+         plot = p5, 
+         path = plot_dir, 
+         width = 9, height = 4, 
+         device = "pdf", dpi = 600)
+  
+  p5
+  
+  # Plot 6: Neuron only - colored by 1/f status without labels
+  p6 <- DimPlot(neuron_obj_cleaned, reduction = "umap", group.by = "one_over_f_status", 
+                label = FALSE) + 
+    NoAxes() +
+    NoLegend()
+  
+  ggsave(filename = "epilepsy_neurononly_1overf_nolabel.pdf", 
+         plot = p6, 
+         path = plot_dir, 
+         width = 5.5, height = 3.6, 
+         device = "pdf", dpi = 600)
+  
+  p6
+} else {
+  cat("Note: one_over_f_status not found in metadata. Skipping 1/f status plots.\n")
+}
+```
+
+## 7. Proportion Bar Plot by 1/f Status
+
+```{r}
+# Check if one_over_f_status exists
+if (!"one_over_f_status" %in% colnames(neuron_obj_cleaned@meta.data)) {
+  warning("one_over_f_status not found in metadata. Skipping proportion plot.")
+} else {
+  # Create proportion table
+  prop_df <- table(neuron_obj_cleaned$one_over_f_status,
+                   neuron_obj_cleaned$subclass_name) |>
+    as.data.frame() |>
+    `colnames<-`(c("one_over_f_status", "type", "Freq")) |>
+    group_by(one_over_f_status) |>
+    mutate(prop = Freq / sum(Freq)) |>
+    ungroup()
+  
+  # Set factor levels
+  prop_df$type <- factor(prop_df$type, levels = rev(names(my_colors_2)))
+  
+  # Recode 1/f status labels
+  prop_df <- prop_df |>
+    mutate(one_over_f_status = recode(one_over_f_status,
+                                      "low1overf"  = "Flat 1/f",
+                                      "high1overf" = "Steep 1/f"),
+           one_over_f_status = factor(one_over_f_status,
+                                      levels = c("Flat 1/f", "Steep 1/f")))
+  
+  # Generate bar plot with pattern
+  p4 <- ggplot(prop_df,
+         aes(x      = prop,
+             y      = type,
+             fill   = type,
+             pattern        = one_over_f_status,
+             pattern_colour = one_over_f_status)) +
+    
+    geom_bar_pattern(
+      stat     = "identity",
+      position = position_dodge2(width = 0.9, reverse = TRUE),
+      width    = 0.85,
+      colour   = "black",
+      pattern          = "stripe",
+      pattern_angle    = 45,
+      pattern_density  = 0.4,
+      pattern_spacing  = 0.03,
+      pattern_size     = 0.7,
+      pattern_fill     = NA
+    ) +
+    
+    geom_text(aes(label = label_number(accuracy = 0.001)(prop)),
+              position = position_dodge2(width = 0.9, reverse = TRUE),
+              hjust    = -0.15,
+              vjust    = 0.5,
+              size     = 3) +
+    
+    scale_fill_manual(values = my_colors_2, guide = "none") +
+    scale_pattern_manual(values = c("Flat 1/f" = "stripe", "Steep 1/f" = "none"),
+                         guide = "none") +
+    scale_pattern_colour_manual(values = c("Flat 1/f" = "black",
+                                           "Steep 1/f" = NA),
+                                 guide = "none") +
+    
+    labs(x = "Proportion", y = NULL, title = "Neuron Subtype Proportions by 1/f Status") +
+    theme_classic(base_size = 11) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "none")
+  
+  ggsave(filename = "epilepsy_proportions_1overf.pdf", 
+         plot = p4, 
+         path = plot_dir, 
+         width = 10, height = 8, 
+         device = "pdf", dpi = 600)
+  
+  p4
+}
+```
+
+## 8. Excitatory Module Violin Plot
+
+```{r}
+# Check if one_over_f_status exists
+if (!"one_over_f_status" %in% colnames(neuron_obj_cleaned@meta.data)) {
+  warning("one_over_f_status not found in metadata. Skipping violin plot.")
+} else {
+  # Violin plot of Excitatory module score
+  p5 <- VlnPlot(neuron_obj_cleaned, 
+                features = c("Excitatory_Profile1"), 
+                group.by = "one_over_f_status") + 
+    ggtitle("Excitatory Profile: Steep vs Flat 1/f") + 
+    ylab("Excitatory Module Score") +
+    theme(plot.title = element_text(hjust = 0.5))
+  
+  ggsave(filename = "epilepsy_excitatory_module_violin.pdf", 
+         plot = p5, 
+         path = plot_dir, 
+         width = 8, height = 6, 
+         device = "pdf", dpi = 600)
+  
+  p5
+  
+  # Also create violin plot by subclass
+  p6 <- VlnPlot(neuron_obj_cleaned, 
+                features = c("Excitatory_Profile1"), 
+                group.by = "subclass_name") + 
+    ggtitle("Excitatory Profile by Neuron Subtype") + 
+    ylab("Excitatory Module Score") +
+    theme(plot.title = element_text(hjust = 0.5),
+          axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  ggsave(filename = "epilepsy_excitatory_module_by_subtype.pdf", 
+         plot = p6, 
+         path = plot_dir, 
+         width = 12, height = 6, 
+         device = "pdf", dpi = 600)
+  
+  p6
+}
+```
+
+## 9. Export Data for Prism
+
+```{r}
+# Create CSV output directory
+csv_dir <- "D:/AbrahamDada/oneoverf/oneoverf_R1_10326/csv"
+if (!dir.exists(csv_dir)) {
+  dir.create(csv_dir, recursive = TRUE)
+}
+
+# Extract metadata with module scores
+prism_data <- neuron_obj_cleaned@meta.data
+
+# Save as CSV
+csv_path <- file.path(csv_dir, "epilepsy_module_scores.csv")
+write.csv(prism_data, csv_path, row.names = TRUE)
+
+cat("Data exported to:", csv_path, "\n")
+cat("Columns exported:", paste(colnames(prism_data), collapse = ", "), "\n")
+```
+
+## 10. Save Annotated Objects
+
+```{r}
+# Save the full object with MapMyCells annotations
+output_path <- "D:/Youssef Sibih/Seurat_Objects/R1_123125/epilepsy_4samples_combined_sct_MapCells.rds"
+saveRDS(obj, file = output_path)
+cat("Full annotated object saved to:", output_path, "\n")
+
+# Save the neuron-only object with MapMyCells annotations and module scores
+neuron_output_path <- "D:/Youssef Sibih/Seurat_Objects/R1_123125/epilepsy_neurons_sct_MapCells.rds"
+saveRDS(neuron_obj_cleaned, file = neuron_output_path)
+cat("Neuron-only object saved to:", neuron_output_path, "\n")
+```
+
+## 11. Summary
+
+```{r}
+cat("=== Analysis Summary ===\n")
+cat("Total cells in object:", ncol(obj), "\n")
+cat("Cells with MapMyCells annotations:", sum(!is.na(obj@meta.data$class_name)), "\n")
+cat("Total neurons:", ncol(neuron_obj_cleaned), "\n")
+cat("Neuron subtypes identified:", length(unique(neuron_obj_cleaned@meta.data$subclass_name)), "\n\n")
+
+cat("Outputs created:\n")
+cat("1. Full annotated object:", output_path, "\n")
+cat("2. Neuron-only object:", neuron_output_path, "\n")
+cat("3. Plots saved to:", plot_dir, "\n")
+cat("   - epilepsy_allcells_labeled.pdf\n")
+cat("   - epilepsy_allcells_unlabeled.pdf\n")
+cat("   - epilepsy_neurononly_labeled.pdf\n")
+cat("   - epilepsy_neurononly_nolabel.pdf\n")
+if ("one_over_f_status" %in% colnames(neuron_obj_cleaned@meta.data)) {
+  cat("   - epilepsy_neurononly_1overf_labeled.pdf\n")
+  cat("   - epilepsy_neurononly_1overf_nolabel.pdf\n")
+  cat("   - epilepsy_proportions_1overf.pdf\n")
+  cat("   - epilepsy_excitatory_module_violin.pdf\n")
+  cat("   - epilepsy_excitatory_module_by_subtype.pdf\n")
+}
+cat("4. CSV export:", csv_path, "\n")
+```
+
